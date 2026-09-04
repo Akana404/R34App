@@ -1,23 +1,40 @@
 "use client";
 
-import { useCallback, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useSyncExternalStore } from "react";
+import {
+  MAX_LIKES,
+  sanitizeBlockedTags as sanitizeBlocked,
+  tagsOf,
+  type AppSnapshot,
+  type DismissedPost,
+  type LikedPost,
+} from "@/lib/state";
 import type { Post } from "@/lib/types";
 import type { MobileColumns } from "@/components/PostGrid";
 
+export {
+  MAX_BLOCKED_TAGS,
+  MAX_DISMISSED,
+  MAX_LIKES,
+  MAX_SEEN,
+} from "@/lib/state";
+export type { DismissedPost, LikedPost } from "@/lib/state";
+
+/**
+ * The app's state, as the browser sees it.
+ *
+ * Two stores live here. The *content* — likes, dismissals, seen posts, seed
+ * and blocked tags — is kept by the server in SQLite; this module holds a
+ * mirror of it that is hydrated once per page load and written through on
+ * every change, so the hooks stay synchronous and every browser hitting the
+ * same server sees the same data. The three per-browser UI switches
+ * (mobile column count, hide-AI, rating filter) have no business on a server
+ * and stay in `localStorage`.
+ */
+
 const COLUMNS_KEY = "mobileColumns";
-const SEEDS_KEY = "forYou:seeds";
-const LIKES_KEY = "forYou:likes";
 const HIDE_AI_KEY = "hideAi";
-const DISMISSED_KEY = "forYou:dismissed";
-const BLOCKED_KEY = "blockedTags";
 const RATING_KEY = "rating";
-const SEEN_KEY = "forYou:seen";
-export const MAX_LIKES = 500;
-/** The API rejects very long queries, so the blacklist can't grow forever. */
-export const MAX_BLOCKED_TAGS = 25;
-export const MAX_DISMISSED = 300;
-/** Ring buffer of posts the For You feed has already shown you. */
-export const MAX_SEEN = 2000;
 
 /** Query suffix that filters out AI posts when the hide-AI toggle is on. */
 export const HIDE_AI_TAGS = "-ai_generated";
@@ -25,22 +42,9 @@ export const HIDE_AI_TAGS = "-ai_generated";
 export const RATINGS = ["", "safe", "questionable", "explicit"] as const;
 export type Rating = (typeof RATINGS)[number];
 
-export interface LikedPost {
-  id: number;
-  tags: string[];
-  score: number;
-  rating: string;
-  likedAt: number;
-  /** Full post for rendering in the Liked view; absent on older likes. */
-  post?: Post;
-}
-
-/** A post marked "not interested" — kept with its tags as negative signal. */
-export interface DismissedPost {
-  id: number;
-  tags: string[];
-  dismissedAt: number;
-}
+// ---------------------------------------------------------------------------
+// Browser-local UI settings
+// ---------------------------------------------------------------------------
 
 function subscribeToStorage(callback: () => void) {
   window.addEventListener("storage", callback);
@@ -56,12 +60,13 @@ function notifyStorage(key: string) {
 // of the session, and clearing the flag on a later small write would hide that.
 let storageFailed = false;
 
+const STORAGE_ERROR_KEY = "__storageError";
+
 /**
  * `localStorage.setItem` that survives a full store or a browser that throws
- * on every write (Safari private mode). Returns whether the write landed;
- * the first failure raises the flag behind `useStorageWarning`.
+ * on every write (Safari private mode). Returns whether the write landed.
  */
-export function trySetItem(key: string, raw: string): boolean {
+function trySetItem(key: string, raw: string): boolean {
   try {
     localStorage.setItem(key, raw);
     return true;
@@ -72,17 +77,6 @@ export function trySetItem(key: string, raw: string): boolean {
     }
     return false;
   }
-}
-
-const STORAGE_ERROR_KEY = "__storageError";
-
-/** True once any localStorage write has failed this session. */
-export function useStorageWarning(): boolean {
-  return useSyncExternalStore(
-    subscribeToStorage,
-    () => storageFailed,
-    () => false,
-  );
 }
 
 // getSnapshot must return a referentially stable value or useSyncExternalStore
@@ -103,37 +97,18 @@ function readStored<T>(key: string, fallback: T): T {
   }
 }
 
-/**
- * One id set per stored value, shared by every component that asks.
- *
- * `readStored` hands back a referentially stable array (see the parse cache
- * above), so this WeakMap turns "a Set per card per render" into "a Set per
- * distinct stored value" — with a few hundred cards mounted, each carrying
- * these hooks, rebuilding them per card made every like cost hundreds of
- * thousands of inserts.
- */
-const idSetCache = new WeakMap<object, Set<number>>();
-
-function idSetOf(list: { id: number }[]): Set<number> {
-  let ids = idSetCache.get(list);
-  if (!ids) {
-    ids = new Set(list.map((entry) => entry.id));
-    idSetCache.set(list, ids);
-  }
-  return ids;
-}
-
-function writeStored<T>(key: string, value: T) {
-  if (trySetItem(key, JSON.stringify(value))) notifyStorage(key);
-}
-
 function useStoredJSON<T>(key: string, fallback: T): [T, (next: T) => void] {
   const value = useSyncExternalStore(
     subscribeToStorage,
     () => readStored(key, fallback),
     () => fallback,
   );
-  const setValue = useCallback((next: T) => writeStored(key, next), [key]);
+  const setValue = useCallback(
+    (next: T) => {
+      if (trySetItem(key, JSON.stringify(next))) notifyStorage(key);
+    },
+    [key],
+  );
   return [value, setValue];
 }
 
@@ -158,201 +133,6 @@ export function useHideAi(): [boolean, () => void] {
   return [hideAi, toggle];
 }
 
-const NO_SEEDS: string[] = [];
-
-export function useSeedTags() {
-  const [seeds, setSeeds] = useStoredJSON<string[]>(SEEDS_KEY, NO_SEEDS);
-  return { seeds, setSeeds };
-}
-
-const NO_LIKES: LikedPost[] = [];
-
-export function useLikes() {
-  const [likes, setLikes] = useStoredJSON<LikedPost[]>(LIKES_KEY, NO_LIKES);
-
-  const likedIds = idSetOf(likes);
-
-  const isLiked = useCallback((id: number) => likedIds.has(id), [likedIds]);
-
-  const toggleLike = useCallback(
-    (post: Post) => {
-      // Read fresh so two toggles in quick succession don't clobber each other.
-      const current = readStored<LikedPost[]>(LIKES_KEY, NO_LIKES);
-      const next = current.some((l) => l.id === post.id)
-        ? current.filter((l) => l.id !== post.id)
-        : [
-            ...current,
-            {
-              id: post.id,
-              tags: post.tags.split(/\s+/).filter(Boolean),
-              score: post.score,
-              rating: post.rating,
-              likedAt: Date.now(),
-              post,
-            },
-          ].slice(-MAX_LIKES);
-      setLikes(next);
-    },
-    [setLikes],
-  );
-
-  return { likes, likedIds, isLiked, toggleLike };
-}
-
-/** Everything this app persists — the unit of export/import. */
-export interface PrefsSnapshot {
-  blocked: string[];
-  rating: Rating;
-  dismissed: DismissedPost[];
-  seen: number[];
-  likes: LikedPost[];
-  seeds: string[];
-  hideAi: boolean;
-  mobileColumns: MobileColumns;
-}
-
-/** Reads the whole store; browser-only, so call it from an event handler. */
-export function readPrefsSnapshot(): PrefsSnapshot {
-  return {
-    likes: readStored<LikedPost[]>(LIKES_KEY, NO_LIKES),
-    dismissed: readStored<DismissedPost[]>(DISMISSED_KEY, NO_DISMISSED),
-    seen: readStored<number[]>(SEEN_KEY, NO_SEEN),
-    seeds: readStored<string[]>(SEEDS_KEY, NO_SEEDS),
-    blocked: readStored<string[]>(BLOCKED_KEY, NO_BLOCKED),
-    rating: readStored<Rating>(RATING_KEY, ""),
-    hideAi: readStored<boolean>(HIDE_AI_KEY, false),
-    mobileColumns: localStorage.getItem(COLUMNS_KEY) === "1" ? 1 : 2,
-  };
-}
-
-/**
- * Writes a snapshot back; every `useSyncExternalStore` hook re-renders.
- *
- * All-or-nothing: a quota failure part-way through rolls the written keys
- * back, so an import can never leave the store half-replaced. Returns
- * whether the snapshot landed.
- */
-export function writePrefsSnapshot(next: PrefsSnapshot): boolean {
-  const writes: [string, string][] = [
-    [LIKES_KEY, JSON.stringify(next.likes.slice(-MAX_LIKES))],
-    [DISMISSED_KEY, JSON.stringify(next.dismissed.slice(-MAX_DISMISSED))],
-    [SEEN_KEY, JSON.stringify(next.seen.slice(-MAX_SEEN))],
-    [SEEDS_KEY, JSON.stringify(next.seeds)],
-    [BLOCKED_KEY, JSON.stringify(next.blocked.slice(0, MAX_BLOCKED_TAGS))],
-    [RATING_KEY, JSON.stringify(next.rating)],
-    [HIDE_AI_KEY, JSON.stringify(next.hideAi)],
-    [COLUMNS_KEY, String(next.mobileColumns)],
-  ];
-  const previous = writes.map(
-    ([key]) => [key, localStorage.getItem(key)] as const,
-  );
-  for (let i = 0; i < writes.length; i++) {
-    if (!trySetItem(writes[i][0], writes[i][1])) {
-      for (const [key, raw] of previous.slice(0, i)) {
-        // The old values fit before, so restoring them normally succeeds —
-        // and if even that throws, the key keeps the new value, which is
-        // still a valid store.
-        if (raw === null) localStorage.removeItem(key);
-        else trySetItem(key, raw);
-      }
-      return false;
-    }
-  }
-  for (const [key] of writes) notifyStorage(key);
-  return true;
-}
-
-const NO_DISMISSED: DismissedPost[] = [];
-
-export function useDismissed() {
-  const [dismissed, setDismissed] = useStoredJSON<DismissedPost[]>(
-    DISMISSED_KEY,
-    NO_DISMISSED,
-  );
-
-  const dismissedIds = idSetOf(dismissed);
-
-  const dismiss = useCallback(
-    (post: Post) => {
-      // Read fresh, like toggleLike: two dismissals in a row must not race.
-      const current = readStored<DismissedPost[]>(DISMISSED_KEY, NO_DISMISSED);
-      if (current.some((d) => d.id === post.id)) return;
-      setDismissed(
-        [
-          ...current,
-          {
-            id: post.id,
-            tags: post.tags.split(/\s+/).filter(Boolean),
-            dismissedAt: Date.now(),
-          },
-        ].slice(-MAX_DISMISSED),
-      );
-    },
-    [setDismissed],
-  );
-
-  const undismiss = useCallback(
-    (id: number) => {
-      const current = readStored<DismissedPost[]>(DISMISSED_KEY, NO_DISMISSED);
-      setDismissed(current.filter((d) => d.id !== id));
-    },
-    [setDismissed],
-  );
-
-  const clearDismissed = useCallback(
-    () => setDismissed(NO_DISMISSED),
-    [setDismissed],
-  );
-
-  return { dismissed, dismissedIds, dismiss, undismiss, clearDismissed };
-}
-
-const NO_SEEN: number[] = [];
-
-/**
- * Posts the For You feed has shown before. Read outside React on purpose:
- * a feed that re-ranked as its own posts became "seen" would reshuffle
- * itself under the reader.
- */
-export function readSeen(): Set<number> {
-  // Called from render (via useMemo), so it also runs while prerendering.
-  if (typeof window === "undefined") return new Set();
-  return new Set(readStored<number[]>(SEEN_KEY, NO_SEEN));
-}
-
-export function recordSeen(ids: number[]) {
-  if (typeof window === "undefined") return;
-  const current = readStored<number[]>(SEEN_KEY, NO_SEEN);
-  const known = new Set(current);
-  const fresh = ids.filter((id) => !known.has(id));
-  if (fresh.length === 0) return;
-  writeStored(SEEN_KEY, [...current, ...fresh].slice(-MAX_SEEN));
-}
-
-const NO_BLOCKED: string[] = [];
-
-/** Tags excluded from every search, as `-tag` on the query. */
-export function useBlockedTags() {
-  const [blocked, setBlocked] = useStoredJSON<string[]>(
-    BLOCKED_KEY,
-    NO_BLOCKED,
-  );
-
-  const setBlockedTags = useCallback(
-    (next: string[]) => {
-      // Metatags would silently change what a query means rather than
-      // subtract from it, and the list has to stay short enough to send.
-      const clean = next
-        .map((tag) => tag.trim().replace(/^-/, ""))
-        .filter((tag) => tag.length > 0 && !tag.includes(":"));
-      setBlocked([...new Set(clean)].slice(0, MAX_BLOCKED_TAGS));
-    },
-    [setBlocked],
-  );
-
-  return { blocked, setBlockedTags };
-}
-
 export function useRating(): [Rating, (next: Rating) => void] {
   const [rating, setRating] = useStoredJSON<Rating>(RATING_KEY, "");
   const set = useCallback(
@@ -360,6 +140,374 @@ export function useRating(): [Rating, (next: Rating) => void] {
     [setRating],
   );
   return [rating, set];
+}
+
+// ---------------------------------------------------------------------------
+// Server-backed content state
+// ---------------------------------------------------------------------------
+
+const NO_LIKES: LikedPost[] = [];
+const NO_DISMISSED: DismissedPost[] = [];
+const NO_TAGS: string[] = [];
+
+type ContentState = Omit<AppSnapshot, "seen">;
+
+let content: ContentState | null = null;
+/**
+ * Kept apart from `content` because it is read and written outside React —
+ * a feed that re-ranked as its own posts became "seen" would reshuffle
+ * itself under the reader.
+ */
+let seenIds: Set<number> | null = null;
+
+const listeners = new Set<() => void>();
+
+function subscribeToContent(callback: () => void) {
+  listeners.add(callback);
+  return () => {
+    listeners.delete(callback);
+  };
+}
+
+function notifyContent() {
+  for (const listener of listeners) listener();
+}
+
+/**
+ * Seeds the mirror from the snapshot the server rendered with. Called during
+ * render, so it has to be idempotent: only the first snapshot of a page load
+ * wins, and every later change comes from a mutation.
+ */
+export function hydrateContent(snapshot: AppSnapshot) {
+  if (content) return;
+  content = {
+    likes: snapshot.likes,
+    dismissed: snapshot.dismissed,
+    seeds: snapshot.seeds,
+    blocked: snapshot.blocked,
+  };
+  seenIds = new Set(snapshot.seen);
+}
+
+/**
+ * Clears the mirror. Module-level state outlives a single test, so the suite
+ * needs a way back to "nothing loaded yet" between cases.
+ */
+export function resetContent() {
+  content = null;
+  seenIds = null;
+  saveFailed = false;
+  storageFailed = false;
+  likePosts.clear();
+  likePostsLoaded = false;
+  likePostsPending = null;
+  likePostsVersion++;
+  joinCache = null;
+  for (const slice of Object.keys(tickets) as Slice[]) tickets[slice] = 0;
+}
+
+/** True once a write to the store failed — sticky, like the storage flag. */
+let saveFailed = false;
+
+function subscribeToWarnings(callback: () => void) {
+  window.addEventListener("storage", callback);
+  listeners.add(callback);
+  return () => {
+    window.removeEventListener("storage", callback);
+    listeners.delete(callback);
+  };
+}
+
+/** True once any change this session could not be saved. */
+export function useStorageWarning(): boolean {
+  return useSyncExternalStore(
+    subscribeToWarnings,
+    () => storageFailed || saveFailed,
+    () => false,
+  );
+}
+
+type Mutation =
+  | { action: "toggleLike"; post: Post }
+  | { action: "dismiss"; post: Post }
+  | { action: "undismiss"; id: number }
+  | { action: "clearDismissed" }
+  | { action: "recordSeen"; ids: number[] }
+  | { action: "setSeeds"; tags: string[] }
+  | { action: "setBlockedTags"; tags: string[] }
+  | { action: "recordTagInfo"; entries: unknown[] };
+
+export async function postMutation<T>(body: Mutation): Promise<T> {
+  const res = await fetch("/api/state", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`state mutation failed with ${res.status}`);
+  return (await res.json()) as T;
+}
+
+type Slice = keyof ContentState;
+
+// One ticket counter per slice: a response only gets to write if no newer
+// request for that slice has been sent since, or a slow answer would drag the
+// view back to a state the user has already moved past.
+const tickets: Record<Slice, number> = {
+  likes: 0,
+  dismissed: 0,
+  seeds: 0,
+  blocked: 0,
+};
+
+function applySlice<K extends Slice>(key: K, value: ContentState[K]) {
+  if (!content || content[key] === value) return;
+  content = { ...content, [key]: value };
+  notifyContent();
+}
+
+/**
+ * Paints the change immediately, then writes it through. The server answers
+ * with the slice it actually stored, which is how a cap eviction the client
+ * guessed at gets corrected; a failed write rolls the change back and raises
+ * the save warning.
+ */
+function mutateSlice<K extends Slice>(
+  key: K,
+  optimistic: ContentState[K],
+  body: Mutation,
+) {
+  if (!content) return;
+  const rollback = content[key];
+  const ticket = ++tickets[key];
+  applySlice(key, optimistic);
+
+  postMutation<ContentState[K]>(body)
+    .then((stored) => {
+      if (ticket === tickets[key]) applySlice(key, stored);
+    })
+    .catch(() => {
+      if (ticket === tickets[key]) applySlice(key, rollback);
+      if (!saveFailed) {
+        saveFailed = true;
+        notifyContent();
+      }
+    });
+}
+
+/**
+ * One id set per stored value, shared by every component that asks.
+ *
+ * The mirror hands back a referentially stable array — it is only replaced
+ * when the slice actually changes — so this WeakMap turns "a Set per card per
+ * render" into "a Set per distinct value". With a few hundred cards mounted,
+ * each carrying these hooks, rebuilding them per card made every like cost
+ * hundreds of thousands of inserts.
+ */
+const idSetCache = new WeakMap<object, Set<number>>();
+
+function idSetOf(list: { id: number }[]): Set<number> {
+  let ids = idSetCache.get(list);
+  if (!ids) {
+    ids = new Set(list.map((entry) => entry.id));
+    idSetCache.set(list, ids);
+  }
+  return ids;
+}
+
+function useSlice<K extends Slice>(
+  key: K,
+  fallback: ContentState[K],
+): ContentState[K] {
+  return useSyncExternalStore(
+    subscribeToContent,
+    () => content?.[key] ?? fallback,
+    () => fallback,
+  );
+}
+
+export function useLikes() {
+  const likes = useSlice("likes", NO_LIKES);
+
+  const likedIds = idSetOf(likes);
+
+  const isLiked = useCallback((id: number) => likedIds.has(id), [likedIds]);
+
+  const toggleLike = useCallback((post: Post) => {
+    // Read the mirror, not the render closure, so two toggles in quick
+    // succession don't clobber each other.
+    const current = content?.likes;
+    if (!current) return;
+    const next = current.some((like) => like.id === post.id)
+      ? current.filter((like) => like.id !== post.id)
+      : [
+          ...current,
+          {
+            id: post.id,
+            tags: tagsOf(post),
+            score: post.score,
+            rating: post.rating,
+            likedAt: Date.now(),
+          },
+        ].slice(-MAX_LIKES);
+    rememberLikePost(post);
+    mutateSlice("likes", next, { action: "toggleLike", post });
+  }, []);
+
+  return { likes, likedIds, isLiked, toggleLike };
+}
+
+// The full posts behind the likes: far heavier than the rest of the state and
+// needed by the Liked view alone, so they load separately and stay cached for
+// the session. Liking a post seeds its own entry, so it shows up at once.
+const likePosts = new Map<number, Post>();
+let likePostsLoaded = false;
+let likePostsPending: Promise<void> | null = null;
+let likePostsVersion = 0;
+
+function rememberLikePost(post: Post) {
+  likePosts.set(post.id, post);
+  likePostsVersion++;
+}
+
+function loadLikePosts(): Promise<void> {
+  if (likePostsLoaded) return Promise.resolve();
+  likePostsPending ??= fetch("/api/state?part=likePosts")
+    .then((res) => {
+      if (!res.ok) throw new Error(`liked posts failed with ${res.status}`);
+      return res.json() as Promise<Post[]>;
+    })
+    .then((posts) => {
+      for (const post of posts) likePosts.set(post.id, post);
+      likePostsLoaded = true;
+      likePostsVersion++;
+      notifyContent();
+    })
+    .catch(() => {
+      // The Liked view degrades to "nothing to show"; a reload retries.
+      likePostsPending = null;
+    });
+  return likePostsPending;
+}
+
+let joinCache: {
+  likes: LikedPost[];
+  version: number;
+  value: LikedPost[];
+} | null = null;
+
+function likedWithPosts(): LikedPost[] {
+  const likes = content?.likes ?? NO_LIKES;
+  if (
+    joinCache &&
+    joinCache.likes === likes &&
+    joinCache.version === likePostsVersion
+  ) {
+    return joinCache.value;
+  }
+  const value = likes.map((like) =>
+    likePosts.has(like.id) ? { ...like, post: likePosts.get(like.id) } : like,
+  );
+  joinCache = { likes, version: likePostsVersion, value };
+  return value;
+}
+
+/** The likes with their posts attached, for the Liked view. */
+export function useLikedPosts(): { likes: LikedPost[]; loading: boolean } {
+  useEffect(() => {
+    void loadLikePosts();
+  }, []);
+
+  const likes = useSyncExternalStore(
+    subscribeToContent,
+    likedWithPosts,
+    () => NO_LIKES,
+  );
+  const loading = useSyncExternalStore(
+    subscribeToContent,
+    () => !likePostsLoaded,
+    () => true,
+  );
+
+  return { likes, loading };
+}
+
+export function useDismissed() {
+  const dismissed = useSlice("dismissed", NO_DISMISSED);
+
+  const dismissedIds = idSetOf(dismissed);
+
+  const dismiss = useCallback((post: Post) => {
+    const current = content?.dismissed;
+    if (!current || current.some((entry) => entry.id === post.id)) return;
+    const next = [
+      ...current,
+      { id: post.id, tags: tagsOf(post), dismissedAt: Date.now() },
+    ];
+    mutateSlice("dismissed", next, { action: "dismiss", post });
+  }, []);
+
+  const undismiss = useCallback((id: number) => {
+    const current = content?.dismissed;
+    if (!current) return;
+    mutateSlice(
+      "dismissed",
+      current.filter((entry) => entry.id !== id),
+      { action: "undismiss", id },
+    );
+  }, []);
+
+  const clearDismissed = useCallback(() => {
+    mutateSlice("dismissed", NO_DISMISSED, { action: "clearDismissed" });
+  }, []);
+
+  return { dismissed, dismissedIds, dismiss, undismiss, clearDismissed };
+}
+
+export function useSeedTags() {
+  const seeds = useSlice("seeds", NO_TAGS);
+
+  const setSeeds = useCallback((next: string[]) => {
+    mutateSlice("seeds", next, { action: "setSeeds", tags: next });
+  }, []);
+
+  return { seeds, setSeeds };
+}
+
+/** Tags excluded from every search, as `-tag` on the query. */
+export function useBlockedTags() {
+  const blocked = useSlice("blocked", NO_TAGS);
+
+  const setBlockedTags = useCallback((next: string[]) => {
+    // The server applies the same rules again; this only keeps the optimistic
+    // paint from showing something it will immediately take back.
+    mutateSlice("blocked", sanitizeBlocked(next), {
+      action: "setBlockedTags",
+      tags: next,
+    });
+  }, []);
+
+  return { blocked, setBlockedTags };
+}
+
+/**
+ * Posts the For You feed has shown before. Read outside React on purpose, and
+ * handed out as a copy so a feed that snapshots it keeps its ordering stable
+ * while the run records more.
+ */
+export function readSeen(): Set<number> {
+  // Called from render (via useMemo), so it also runs while prerendering.
+  if (typeof window === "undefined") return new Set();
+  return new Set(seenIds);
+}
+
+export function recordSeen(ids: number[]) {
+  if (typeof window === "undefined" || !seenIds) return;
+  const fresh = ids.filter((id) => !seenIds!.has(id));
+  if (fresh.length === 0) return;
+  for (const id of fresh) seenIds.add(id);
+  // Monotonic and advisory: ids are only ever added, so a lost write costs a
+  // post its down-ranking and nothing else. Not worth a warning.
+  void postMutation({ action: "recordSeen", ids: fresh }).catch(() => {});
 }
 
 /**

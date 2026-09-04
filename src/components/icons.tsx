@@ -137,24 +137,6 @@ export function TwoColumnsIcon(props: IconProps) {
   );
 }
 
-export function DownloadIcon(props: IconProps) {
-  return (
-    <Svg {...props}>
-      <path d="M12 4v10m0 0 4-4m-4 4-4-4" />
-      <path d="M4 17v1.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V17" />
-    </Svg>
-  );
-}
-
-export function UploadIcon(props: IconProps) {
-  return (
-    <Svg {...props}>
-      <path d="M12 20V10m0 0 4 4m-4-4-4 4" />
-      <path d="M4 7V5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5V7" />
-    </Svg>
-  );
-}
-
 export function CloseIcon(props: IconProps) {
   return (
     <Svg {...props}>

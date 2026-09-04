@@ -4,6 +4,8 @@ import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BlockedTagsPanel, RatingSelect } from "@/components/ContentFilters";
+import { readBlockedTags } from "@/lib/store";
+import { installStore, type StoreHarness } from "@/test/store";
 
 function renderWithQuery(ui: React.ReactElement) {
   const client = new QueryClient({
@@ -16,12 +18,15 @@ function renderWithQuery(ui: React.ReactElement) {
 
 const stored = (key: string) => JSON.parse(localStorage.getItem(key) ?? "null");
 
+let harness: StoreHarness;
+
+/** The blocked tags live in the shared store; the rating stays per-browser. */
+const blocked = () => readBlockedTags(harness.db);
+
 beforeEach(() => {
   localStorage.clear();
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (): Promise<unknown> => ({ ok: true, json: async () => [] })),
-  );
+  harness = installStore();
+  harness.route("/api/autocomplete", () => []);
 });
 
 afterEach(() => {
@@ -63,22 +68,26 @@ describe("BlockedTagsPanel", () => {
     const user = userEvent.setup();
     renderWithQuery(<BlockedTagsPanel />);
     await user.type(screen.getByRole("combobox"), "gore{Enter}");
-    expect(stored("blockedTags")).toEqual(["gore"]);
+    await harness.settle();
+    expect(blocked()).toEqual(["gore"]);
   });
 
   it("refuses a metatag, which would reshape the query", async () => {
     const user = userEvent.setup();
     renderWithQuery(<BlockedTagsPanel />);
     await user.type(screen.getByRole("combobox"), "sort:random{Enter}");
-    expect(stored("blockedTags")).toEqual([]);
+    await harness.settle();
+    expect(blocked()).toEqual([]);
   });
 
   it("removes a blocked tag again", async () => {
-    localStorage.setItem("blockedTags", '["gore","scat"]');
+    harness = installStore({ blocked: ["gore", "scat"] });
+    harness.route("/api/autocomplete", () => []);
     const user = userEvent.setup();
     renderWithQuery(<BlockedTagsPanel />);
     await user.click(screen.getByRole("button", { name: "Remove gore" }));
-    expect(stored("blockedTags")).toEqual(["scat"]);
+    await harness.settle();
+    expect(blocked()).toEqual(["scat"]);
   });
 
   it("carries its own panel chrome only when standalone", () => {

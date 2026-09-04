@@ -4,6 +4,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Post } from "@/lib/types";
 import type { LikedPost } from "@/lib/prefs";
+import { installStore } from "@/test/store";
 
 // The feed's logic lives in the props it hands PostGrid (filterPost,
 // rankPost, getPageQueries, feedId); capture them instead of fetching.
@@ -48,7 +49,7 @@ function like(id: number, tags: string[], likedAt = Date.now() - 1000): LikedPos
 }
 
 function seedLikes(likes: LikedPost[]) {
-  localStorage.setItem("forYou:likes", JSON.stringify(likes));
+  installStore({ likes });
 }
 
 function renderFeed() {
@@ -77,10 +78,14 @@ const armedLikes = () => [
 
 beforeEach(() => {
   localStorage.clear();
+  installStore();
   grid = null;
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 describe("ForYouFeed", () => {
   it("shows the hint instead of a feed while there is no taste at all", () => {
@@ -90,7 +95,7 @@ describe("ForYouFeed", () => {
   });
 
   it("builds a feed from seed tags alone", () => {
-    localStorage.setItem("forYou:seeds", JSON.stringify(["miku_(vocaloid)"]));
+    installStore({ seeds: ["miku_(vocaloid)"] });
     renderFeed();
     expect(screen.queryByTestId("post-grid")).toBeTruthy();
     const queries = grid!.getPageQueries!(0);
@@ -136,8 +141,7 @@ describe("ForYouFeed", () => {
   });
 
   it("down-ranks posts the feed has shown before instead of hiding them", () => {
-    seedLikes(armedLikes());
-    localStorage.setItem("forYou:seen", JSON.stringify([300]));
+    installStore({ likes: armedLikes(), seen: [300] });
     renderFeed();
     const fresh = grid!.rankPost!(post(301, "miku_(vocaloid) vocaloid"));
     const repeat = grid!.rankPost!(post(300, "miku_(vocaloid) vocaloid"));
@@ -148,17 +152,16 @@ describe("ForYouFeed", () => {
   });
 
   it("passes dismissals through as immediate exclusions", () => {
-    seedLikes(armedLikes());
-    localStorage.setItem(
-      "forYou:dismissed",
-      JSON.stringify([{ id: 400, tags: ["x"], dismissedAt: Date.now() }]),
-    );
+    installStore({
+      likes: armedLikes(),
+      dismissed: [{ id: 400, tags: ["x"], dismissedAt: Date.now() }],
+    });
     renderFeed();
     expect(grid!.excludeIds!.has(400)).toBe(true);
   });
 
   it("keeps the feed identity stable until the seeds change", () => {
-    localStorage.setItem("forYou:seeds", JSON.stringify(["vocaloid"]));
+    installStore({ seeds: ["vocaloid"] });
     const view = renderFeed();
     const before = grid!.feedId;
     view.rerender(

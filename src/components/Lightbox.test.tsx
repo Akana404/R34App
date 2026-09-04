@@ -3,7 +3,11 @@ import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Lightbox } from "@/components/Lightbox";
+import { readDismissed, readLikes } from "@/lib/store";
 import type { Post } from "@/lib/types";
+import { installStore, type StoreHarness } from "@/test/store";
+
+let harness: StoreHarness;
 
 const push = vi.fn();
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
@@ -54,11 +58,15 @@ const three = [post(1), post(2), post(3)];
 
 beforeEach(() => {
   localStorage.clear();
+  harness = installStore();
   push.mockClear();
   ensureTagMeta.mockClear();
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 describe("Lightbox", () => {
   it("shows the post's position in the feed", () => {
@@ -113,9 +121,12 @@ describe("Lightbox", () => {
   it("likes and unlikes the post it is showing", async () => {
     const { user } = open(three, 0);
     await user.click(screen.getByRole("button", { name: "Like" }));
-    expect(JSON.parse(localStorage.getItem("forYou:likes")!)[0].id).toBe(1);
+    await harness.settle();
+    expect(readLikes(harness.db)[0].id).toBe(1);
+
     await user.click(screen.getByRole("button", { name: "Unlike" }));
-    expect(JSON.parse(localStorage.getItem("forYou:likes")!)).toEqual([]);
+    await harness.settle();
+    expect(readLikes(harness.db)).toEqual([]);
   });
 
   it("reveals score, rating, size and tags on demand", async () => {
@@ -151,7 +162,8 @@ describe("Lightbox", () => {
 
     const { onIndexChange, user } = open(three, 0, { dismissable: true });
     await user.click(screen.getByRole("button", { name: "Not interested" }));
-    expect(JSON.parse(localStorage.getItem("forYou:dismissed")!)[0].id).toBe(1);
+    await harness.settle();
+    expect(readDismissed(harness.db)[0].id).toBe(1);
     // The feed removes the dismissed post itself, sliding the next one into
     // this index — stepping forward too would skip a post.
     expect(onIndexChange).not.toHaveBeenCalled();

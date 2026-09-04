@@ -36,7 +36,7 @@ export function AppHeader({
   // Never slide away under a focused search field / open autocomplete list.
   const [focusWithin, setFocusWithin] = useState(false);
   const hidden = useHideOnScroll(forceShow || sheetOpen || focusWithin);
-  const storageFull = useStorageWarning();
+  const saveFailed = useStorageWarning();
 
   // The sheet renders outside the header: a transformed ancestor would become
   // the containing block for its `fixed` positioning.
@@ -82,14 +82,13 @@ export function AppHeader({
         )}
       </header>
 
-      {storageFull && (
+      {saveFailed && (
         <p
           role="alert"
           className="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-200"
         >
-          Browser storage is full (or blocked), so likes and settings
-          can&apos;t be saved right now. Export a backup and clear some
-          likes to free space.
+          Recent changes couldn&apos;t be saved and have been undone. Check
+          that the app&apos;s server is still running, then try again.
         </p>
       )}
 
