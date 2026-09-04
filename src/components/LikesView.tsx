@@ -54,13 +54,13 @@ export function LikesView() {
           ) : undefined
         }
         aside={
-          <p className="text-sm text-neutral-500 sm:ml-auto">
+          <p className="text-sm whitespace-nowrap text-neutral-500">
             {likes.length} liked post{likes.length === 1 ? "" : "s"}
             {hiddenCount > 0 && (
               <>
                 {" "}
-                <span className="sm:hidden">· +{hiddenCount} older</span>
-                <span className="hidden sm:inline">
+                <span className="lg:hidden">· +{hiddenCount} older</span>
+                <span className="hidden lg:inline">
                   — {hiddenCount} older like{hiddenCount === 1 ? "" : "s"} can&apos;t
                   be displayed (still counted for recommendations)
                 </span>
