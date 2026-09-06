@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { useLikes } from "@/lib/prefs";
-import { fetchTagMetaForPost, readTagMeta } from "@/lib/tagmeta";
+import { fetchTagMetaForPost, loadTagMeta, readTagMeta } from "@/lib/tagmeta";
 
 /** Pause between lookups — this is a background nicety, not a race. */
 const DELAY_MS = 1500;
@@ -47,6 +47,10 @@ export function TagMetaSync() {
     }
 
     (async () => {
+      // Wait for the stored cache, or the first pass re-fetches tags the
+      // store already knows about.
+      await loadTagMeta();
+      if (cancelled) return;
       // Newest likes first: they matter most to the current profile.
       for (const like of [...likes].reverse()) {
         if (cancelled) break;

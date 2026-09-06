@@ -48,3 +48,8 @@ next-env.d.ts
 .idea
 .junie
 .claude
+# local database (the store itself, plus its WAL sidecars)
+/data
+
+# personal data exported out of the old localStorage build
+/old

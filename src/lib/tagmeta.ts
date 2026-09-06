@@ -1,108 +1,114 @@
 "use client";
 
-import { useSyncExternalStore } from "react";
-import { trySetItem } from "@/lib/prefs";
+import { useEffect, useSyncExternalStore } from "react";
+import { postMutation } from "@/lib/prefs";
 import type { Post, TagCategory, TagMetaMap, TagInfo } from "@/lib/types";
 
-const TAG_META_KEY = "tagMeta";
 /**
- * Roughly how many tags we keep. Each entry is ~30 bytes, and a 500-like
- * profile touches a few thousand distinct tags — well inside the localStorage
- * budget, while the cap keeps a long-lived install from growing forever.
+ * Tag metadata — each tag's site-wide count and category.
+ *
+ * A cache, and treated like one: it lives in the same SQLite store as
+ * everything else, but a failed read or write costs uncoloured tags and a
+ * slightly blunter taste profile, never an error in front of the user. The
+ * whole set is fetched once per page load, kept in memory, and written
+ * through as posts are looked up; the LRU cap is the server's business.
  */
-const MAX_TAGS = 8000;
 
-/**
- * Stored compactly as `[tag, count, category]` entries. An array, not an
- * object: eviction relies on insertion order, and object keys that look like
- * integers ("2023") are always enumerated first regardless of when they were
- * inserted — they could never be refreshed and were always evicted first.
- */
-type StoredMeta = [string, number, string][];
-/** The shape written before the order fix; still readable. */
-type LegacyStoredMeta = Record<string, [number, string]>;
-
-/** Accepts both the current and the legacy stored shape, in order. */
-function storedEntries(raw: string): [string, [number, string]][] {
-  const parsed = JSON.parse(raw) as StoredMeta | LegacyStoredMeta;
-  if (Array.isArray(parsed))
-    return parsed.map(([tag, count, category]) => [tag, [count, category]]);
-  return Object.entries(parsed);
-}
+/** Stored compactly as `[tag, count, category]`, the shape the API returns. */
+type TagMetaEntry = [tag: string, count: number, category: string];
 
 const EMPTY: TagMetaMap = new Map();
 
+let meta: TagMetaMap | null = null;
+const listeners = new Set<() => void>();
+
 function subscribe(callback: () => void) {
-  window.addEventListener("storage", callback);
-  return () => window.removeEventListener("storage", callback);
+  listeners.add(callback);
+  return () => {
+    listeners.delete(callback);
+  };
 }
 
-// useSyncExternalStore needs a referentially stable snapshot, so the parsed
-// map is cached against the raw string it came from.
-let cache: { raw: string; map: TagMetaMap } | null = null;
+function notify() {
+  for (const listener of listeners) listener();
+}
 
-function readMap(): TagMetaMap {
-  const raw = localStorage.getItem(TAG_META_KEY);
-  if (raw === null) return EMPTY;
-  if (cache && cache.raw === raw) return cache.map;
-  try {
-    const map: TagMetaMap = new Map(
-      storedEntries(raw).map(([tag, [count, category]]) => [
-        tag,
-        { count, category: category as TagCategory },
-      ]),
-    );
-    cache = { raw, map };
-    return map;
-  } catch {
-    return EMPTY;
-  }
+let loaded = false;
+let pending: Promise<void> | null = null;
+
+/** Drops the cache, so a test starts from "nothing read in yet". */
+export function resetTagMeta() {
+  meta = null;
+  loaded = false;
+  pending = null;
+  requested.clear();
+}
+
+function entriesToMap(entries: TagMetaEntry[]): TagMetaMap {
+  return new Map(
+    entries.map(([tag, count, category]) => [
+      tag,
+      { count, category: category as TagCategory },
+    ]),
+  );
+}
+
+/** Pulls the cache in once per page load; a failure just leaves it empty. */
+export function loadTagMeta(): Promise<void> {
+  if (loaded) return Promise.resolve();
+  pending ??= fetch("/api/state?part=tagMeta")
+    .then((res) => {
+      if (!res.ok) throw new Error(`tag metadata failed with ${res.status}`);
+      return res.json() as Promise<TagMetaEntry[]>;
+    })
+    .then((entries) => {
+      // Anything learned while the request was in flight wins: it is newer.
+      const fetched = entriesToMap(entries);
+      for (const [tag, value] of meta ?? []) fetched.set(tag, value);
+      meta = fetched;
+      loaded = true;
+      notify();
+    })
+    .catch(() => {
+      pending = null;
+    });
+  return pending;
+}
+
+/** Loads the cache once, for a component that is going to read it. */
+export function useTagMetaLoader() {
+  useEffect(() => {
+    void loadTagMeta();
+  }, []);
 }
 
 /** Reads the store outside React, for background work that shouldn't
  * re-subscribe on every write. */
 export function readTagMeta(): TagMetaMap {
-  return readMap();
+  return meta ?? EMPTY;
 }
 
-/** The learned tag metadata; empty until a liked post has been looked up. */
+/** The learned tag metadata; empty until the cache has been read in. */
 export function useTagMeta(): TagMetaMap {
-  return useSyncExternalStore(subscribe, readMap, () => EMPTY);
+  return useSyncExternalStore(subscribe, readTagMeta, () => EMPTY);
 }
 
 /**
- * Merges freshly fetched `tag_info` into the store. Newly written tags stay
- * at the end of the insertion order, so trimming drops the least recently
- * seen ones first.
+ * Merges freshly fetched `tag_info` into the store and writes it through.
+ *
+ * The local merge happens first and unconditionally: `TagMetaSync` reads its
+ * own writes to decide which post to look up next, so it must not have to
+ * wait on a round trip to see them.
  */
 export function recordTagInfo(entries: TagInfo[]) {
-  // A Map keeps true insertion order (unlike object keys, which reorder
-  // integer-like tags such as "2023"), so eviction really drops the least
-  // recently seen tags.
-  let map = new Map<string, [number, string]>();
-  try {
-    map = new Map(storedEntries(localStorage.getItem(TAG_META_KEY) ?? "[]"));
-  } catch {
-    map = new Map();
-  }
+  if (entries.length === 0) return;
+  const next = new Map(meta ?? EMPTY);
   for (const { tag, count, type } of entries) {
-    map.delete(tag);
-    map.set(tag, [count, type]);
+    next.set(tag, { count, category: type as TagCategory });
   }
-  while (map.size > MAX_TAGS) map.delete(map.keys().next().value!);
-  const serialize = () =>
-    JSON.stringify(
-      [...map].map(([tag, [count, category]]) => [tag, count, category]),
-    );
-  if (!trySetItem(TAG_META_KEY, serialize())) {
-    // Out of space: this is only a cache, so evict the older half and try
-    // once more rather than losing the feature (or throwing) outright.
-    for (const key of [...map.keys()].slice(0, Math.floor(map.size / 2)))
-      map.delete(key);
-    if (!trySetItem(TAG_META_KEY, serialize())) return;
-  }
-  // "storage" only fires in other tabs; notify this tab's subscribers too.
-  window.dispatchEvent(new StorageEvent("storage", { key: TAG_META_KEY }));
+  meta = next;
+  notify();
+  void postMutation({ action: "recordTagInfo", entries }).catch(() => {});
 }
 
 /**
@@ -139,8 +145,7 @@ export async function ensureTagMeta(post: Post): Promise<void> {
   if (requested.has(post.id)) return;
   const tags = post.tags.split(/\s+/).filter(Boolean);
   if (tags.length === 0) return;
-  const meta = readTagMeta();
-  const known = tags.filter((tag) => meta.has(tag)).length;
+  const known = tags.filter((tag) => readTagMeta().has(tag)).length;
   if (known / tags.length >= COVERAGE) return;
   requested.add(post.id);
   try {

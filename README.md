@@ -13,9 +13,8 @@ A modern, locally running web UI for browsing Rule34 content via the [rule34.xxx
 - **For You feed** — pure client-side recommendations built from your likes and seed tags: rare and identifying tags weigh more, dismissals count against, repeats get down-ranked; reproducible until you hit Shuffle
 - **Likes** — capped at 500, browsable on their own page, with near-cap warning
 - **Content filters** — rating filter, blocked tags, and a hide-AI toggle, applied to every feed upstream in the query
-- **Backup / restore** — export the whole state as versioned JSON and import it back (merge or replace)
+- **Shared across your browsers** — likes, dismissals, seed and blocked tags and the learned tag metadata live in a local SQLite file next to the app, so every browser and device pointing at the same instance sees the same data. No accounts and no login: one dataset per running instance
 - **API proxy** — the browser only talks to local routes; the API key stays server-side and never appears in the client
-- **No accounts, no server state** — every preference lives in your browser's localStorage
 
 ## Setup
 
@@ -38,6 +37,25 @@ A modern, locally running web UI for browsing Rule34 content via the [rule34.xxx
 
 Started without credentials, the app shows these setup steps in place of the feed.
 
+### Your data
+
+Everything the app remembers is written to `data/r34-browser.sqlite` (override
+with `DB_PATH` in `.env`). The file is created on first run and is the backup:
+copy it to keep your likes, delete it to start over. Only the three per-browser
+display switches — mobile column count, hide-AI, and the rating filter — stay in
+that browser's `localStorage`.
+
+Coming from an older build that kept everything in `localStorage`? Export that
+JSON, drop it in `old/`, and run it in once:
+
+```sh
+npm run import-backup -- old/your-export.json
+```
+
+It replaces the database contents, accepts either the old backup envelope or a
+raw dump of the `localStorage` keys, and skips entries it can't read rather than
+refusing the whole file.
+
 ## Stack
 
 | Area | Technology |
@@ -51,11 +69,11 @@ Started without credentials, the app shows these setup steps in place of the fee
 ## Architecture
 
 ```
-Browser (React UI, all preferences in localStorage)
-   │  /api/posts?tags=...&page=N
-   │  /api/autocomplete?q=...
-   ▼
-Next.js Route Handlers (localhost)
+Browser (React UI, mirroring the server state in memory)
+   │  /api/posts?tags=...&page=N        /api/state          (GET + POST)
+   │  /api/autocomplete?q=...              │
+   ▼                                       ▼
+Next.js Route Handlers (localhost)    data/r34-browser.sqlite
    │  + api_key & user_id from .env
    ▼
 api.rule34.xxx
@@ -70,16 +88,20 @@ src/
   app/
     page.tsx                  # Browse: search bar + grid
     for-you/page.tsx          # For You: recommendation feed
-    likes/page.tsx            # Liked posts + backup/import
+    likes/page.tsx            # Liked posts
+    layout.tsx                # Reads the state snapshot for the first render
     api/posts/route.ts        # Proxy: post search (dapi, json=1)
     api/autocomplete/route.ts # Proxy: tag autocomplete
+    api/state/route.ts        # The stored state: snapshot + one mutation
   lib/
     r34.ts                    # Server-side API client
     types.ts                  # Zod schemas + types
-    prefs.ts                  # localStorage stores (likes, filters, …)
+    state.ts                  # Shared row types and caps
+    db.ts                     # SQLite handle + schema
+    store.ts                  # Every read/write, caps enforced in SQL
+    prefs.ts                  # Client mirror + the browser-local switches
     recommend.ts              # Taste profile + For You query builder
     tagmeta.ts                # Per-tag category/count cache
-    backup.ts                 # Versioned export/import
   components/
     SearchBar.tsx             # Tag chips + autocomplete dropdown
     PostGrid.tsx              # Infinite scroll + per-page filter/rank
@@ -99,3 +121,4 @@ src/
 - `npm run start` — production server
 - `npm run lint` — ESLint
 - `npm test` — test suite (`npm run test:watch` to iterate, `npm run test:coverage` for coverage)
+- `npm run import-backup -- <file.json>` — one-off import of an old localStorage export
