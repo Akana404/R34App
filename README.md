@@ -4,6 +4,11 @@ A modern, locally running web UI for browsing Rule34 content via the [rule34.xxx
 
 > Intended for private, local use only. Note the [API terms of service](RULE34_API.md): no advertisements, no paywalls, only one API key.
 
+<p float="left">
+  <img src="/docs/img/Browser_Preview.png" width="66%" />
+  <img src="/docs/img/Phone_Preview.png" width="30.75%" />
+</p>
+
 ## Features
 
 - **Tag search with autocomplete** — tags as chips, suggestions with post counts, keyboard navigation (↑↓, Enter, Escape, Backspace removes the last chip); the search syncs to the URL
