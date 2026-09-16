@@ -9,8 +9,5 @@ services:
       USER_ID: ${USER_ID}
       DB_PATH: /app/data/r34-browser.sqlite
     volumes:
-      - r34app-data:/app/data
+      - ./data:/app/data
     restart: unless-stopped
-
-volumes:
-  r34app-data:
