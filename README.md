@@ -3,6 +3,8 @@
 A modern, locally running web UI for browsing Rule34 content via the [rule34.xxx API](https://rule34.xxx) — tag search with autocomplete, a masonry grid with infinite scroll, a fullscreen viewer, and a client-side "For You" feed that learns from what you like.
 
 > Intended for private, local use only. Note the [API terms of service](RULE34_API.md): no advertisements, no paywalls, only one API key.
+>
+> Running this somewhere other than your desktop? See the deployment guides for [Docker](docs/deployment-docker.md) and [Raspberry Pi](docs/deplyoment-raspberry.md).
 
 <p float="left">
   <img src="/docs/img/Browser_Preview.png" width="66%" />
