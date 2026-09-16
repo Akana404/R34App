@@ -3,8 +3,6 @@
 A modern, locally running web UI for browsing Rule34 content via the [rule34.xxx API](https://rule34.xxx) — tag search with autocomplete, a masonry grid with infinite scroll, a fullscreen viewer, and a client-side "For You" feed that learns from what you like.
 
 > Intended for private, local use only. Note the [API terms of service](RULE34_API.md): no advertisements, no paywalls, only one API key.
->
-> Running this somewhere other than your desktop? See the deployment guides for [Docker](docs/deployment-docker.md) and [Raspberry Pi](docs/deplyoment-raspberry.md).
 
 <p float="left">
   <img src="/docs/img/Browser_Preview.png" width="66%" />
@@ -24,6 +22,8 @@ A modern, locally running web UI for browsing Rule34 content via the [rule34.xxx
 - **API proxy** — the browser only talks to local routes; the API key stays server-side and never appears in the client
 
 ## Setup
+
+> Running this somewhere other than your desktop? See the deployment guides for [Docker](docs/deployment-docker.md) and [Raspberry Pi](docs/deplyoment-raspberry.md).
 
 1. Get an API key: [rule34.xxx → Account → Options](https://rule34.xxx/index.php?page=account&s=options) → API Access Credentials
 2. Copy `.env.example` to `.env` and fill in the values:
