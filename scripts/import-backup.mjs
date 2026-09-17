@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { normalizeBackup } from "@/lib/backup";
 import { getDb } from "@/lib/db";
 import {
   readLikePosts,
@@ -13,122 +14,19 @@ import {
  *
  * Usage: npm run import-backup -- old/backup.json
  *
- * Accepts either the backup envelope the old build exported
- * (`{ app, version, exportedAt, data: { … } }`) or a flat dump of the raw
- * localStorage keys, because either is a plausible way to have got the data
- * out. Every field is validated on its own and bad entries are dropped
- * individually — one unreadable like must not cost you the other 499.
+ * Accepts either a backup envelope (`{ app, version, exportedAt, data: { … } }`,
+ * from the old build or from this app's own export) or a flat dump of the raw
+ * localStorage keys. The parser is shared with the in-app import
+ * (`src/lib/backup.ts`) and drops bad entries individually — one unreadable
+ * like must not cost you the other 499.
  *
- * Always a full replace: this exists to cold-start the database, and the app
- * writes to it directly from then on.
+ * Always a full replace, seen ids included: this exists to cold-start the
+ * database. For everyday backups use Export/Import on the Liked page.
  */
-
-const LOCAL_STORAGE_KEYS = {
-  likes: "forYou:likes",
-  dismissed: "forYou:dismissed",
-  seen: "forYou:seen",
-  seeds: "forYou:seeds",
-  blocked: "blockedTags",
-  tagMeta: "tagMeta",
-};
 
 function fail(message) {
   console.error(message);
   process.exit(1);
-}
-
-/** localStorage dumps often keep the values as their raw JSON strings. */
-function decode(value) {
-  if (typeof value !== "string") return value;
-  try {
-    return JSON.parse(value);
-  } catch {
-    return undefined;
-  }
-}
-
-function asArray(value) {
-  const decoded = decode(value);
-  return Array.isArray(decoded) ? decoded : [];
-}
-
-function isObject(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-/** Reduces both accepted shapes to the one the store understands. */
-function normalize(input) {
-  if (!isObject(input)) fail("That file doesn't contain a JSON object.");
-
-  const source = isObject(input.data) ? input.data : input;
-  const pick = (field) =>
-    source[field] !== undefined
-      ? source[field]
-      : source[LOCAL_STORAGE_KEYS[field]];
-
-  return {
-    likes: asArray(pick("likes")).flatMap(readLike),
-    dismissed: asArray(pick("dismissed")).flatMap(readDismissed),
-    seen: asArray(pick("seen")).filter((id) => Number.isFinite(id)),
-    seeds: asArray(pick("seeds")).filter((tag) => typeof tag === "string"),
-    blocked: asArray(pick("blocked")).filter((tag) => typeof tag === "string"),
-    tagMeta: readTagMetaEntries(pick("tagMeta")),
-  };
-}
-
-function readTags(value) {
-  if (Array.isArray(value)) return value.filter((tag) => typeof tag === "string");
-  if (typeof value === "string") return value.split(/\s+/).filter(Boolean);
-  return [];
-}
-
-function readLike(entry) {
-  if (!isObject(entry) || !Number.isFinite(entry.id)) return [];
-  return [
-    {
-      id: entry.id,
-      tags: readTags(entry.tags),
-      score: Number.isFinite(entry.score) ? entry.score : 0,
-      rating: typeof entry.rating === "string" ? entry.rating : "",
-      likedAt: Number.isFinite(entry.likedAt) ? entry.likedAt : Date.now(),
-      post: isObject(entry.post) ? entry.post : undefined,
-    },
-  ];
-}
-
-function readDismissed(entry) {
-  if (!isObject(entry) || !Number.isFinite(entry.id)) return [];
-  return [
-    {
-      id: entry.id,
-      tags: readTags(entry.tags),
-      dismissedAt: Number.isFinite(entry.dismissedAt)
-        ? entry.dismissedAt
-        : Date.now(),
-    },
-  ];
-}
-
-/** Tag metadata was stored either as [tag, count, category] or as an object. */
-function readTagMetaEntries(value) {
-  const decoded = decode(value);
-  if (Array.isArray(decoded)) {
-    return decoded.flatMap((entry) =>
-      Array.isArray(entry) &&
-      typeof entry[0] === "string" &&
-      Number.isFinite(entry[1])
-        ? [[entry[0], entry[1], String(entry[2] ?? "tag")]]
-        : [],
-    );
-  }
-  if (isObject(decoded)) {
-    return Object.entries(decoded).flatMap(([tag, meta]) =>
-      Array.isArray(meta) && Number.isFinite(meta[0])
-        ? [[tag, meta[0], String(meta[1] ?? "tag")]]
-        : [],
-    );
-  }
-  return [];
 }
 
 const file = process.argv[2];
@@ -144,8 +42,9 @@ try {
   fail(`That file isn't valid JSON: ${err.message}`);
 }
 
-const snapshot = normalize(parsed);
+const snapshot = normalizeBackup(parsed)?.backup;
 const total =
+  !snapshot ? 0 :
   snapshot.likes.length +
   snapshot.dismissed.length +
   snapshot.seen.length +

@@ -10,6 +10,7 @@ import {
   type AppSnapshot,
   type DismissedPost,
   type LikedPost,
+  type TagMetaEntry,
 } from "@/lib/state";
 import { postSchema, type Post, type TagInfo } from "@/lib/types";
 
@@ -29,6 +30,10 @@ interface LikeRow {
   score: number;
   rating: string;
   liked_at: number;
+}
+
+interface LikeExportRow extends LikeRow {
+  post: string | null;
 }
 
 interface DismissedRow {
@@ -99,6 +104,16 @@ export function readBlockedTags(db: Db): string[] {
   return rows.map((row) => row.tag);
 }
 
+function parsePost(raw: string | null): Post | undefined {
+  if (raw === null) return undefined;
+  try {
+    const parsed = postSchema.safeParse(JSON.parse(raw));
+    return parsed.success ? parsed.data : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** The light state every page needs synchronously — no post blobs, no tag meta. */
 export function readSnapshot(db: Db): AppSnapshot {
   return {
@@ -121,16 +136,38 @@ export function readLikePosts(db: Db): Post[] {
     )
     .all() as { post: string }[];
   return rows.flatMap((row) => {
-    try {
-      const parsed = postSchema.safeParse(JSON.parse(row.post));
-      return parsed.success ? [parsed.data] : [];
-    } catch {
-      return [];
-    }
+    const post = parsePost(row.post);
+    return post ? [post] : [];
   });
 }
 
-export type TagMetaEntry = [tag: string, count: number, category: string];
+export type { TagMetaEntry };
+
+/**
+ * Everything a backup carries: the likes *with* their posts (a like whose
+ * blob is missing or unreadable is still exported, without it), dismissals,
+ * seeds and blocked tags. Seen ids and tag metadata are caches and stay out.
+ */
+export function readExport(db: Db): Omit<AppSnapshot, "seen"> {
+  const rows = db
+    .prepare(
+      "SELECT id, tags, score, rating, liked_at, post FROM likes ORDER BY liked_at, id",
+    )
+    .all() as LikeExportRow[];
+  return {
+    likes: rows.map((row) => ({
+      id: row.id,
+      tags: parseTags(row.tags),
+      score: row.score,
+      rating: row.rating,
+      likedAt: row.liked_at,
+      post: parsePost(row.post),
+    })),
+    dismissed: readDismissed(db),
+    seeds: readSeeds(db),
+    blocked: readBlockedTags(db),
+  };
+}
 
 export function readTagMeta(db: Db): TagMetaEntry[] {
   const rows = db
@@ -276,17 +313,20 @@ export function recordTagInfo(db: Db, entries: TagInfo[]): void {
   })();
 }
 
-export interface SnapshotImport extends AppSnapshot {
+export interface SnapshotImport extends Omit<AppSnapshot, "seen"> {
+  seen?: number[];
   tagMeta?: TagMetaEntry[];
 }
 
 /**
- * Replaces the whole store in one transaction — either all of it lands or
- * none of it does. The one-off backup import is its only caller.
+ * Replaces the store in one transaction — either all of it lands or none of
+ * it does. The caches (`seen`, `tagMeta`) are only replaced when given: the
+ * in-app import (`/api/backup`) leaves them alone, the cold-start CLI brings
+ * its own.
  */
 export function replaceSnapshot(db: Db, next: SnapshotImport): void {
   db.transaction(() => {
-    for (const table of ["likes", "dismissed", "seen", "seeds", "blocked_tags"]) {
+    for (const table of ["likes", "dismissed", "seeds", "blocked_tags"]) {
       db.prepare(`DELETE FROM ${table}`).run();
     }
 
@@ -317,12 +357,15 @@ export function replaceSnapshot(db: Db, next: SnapshotImport): void {
       );
     }
 
-    const insertSeen = db.prepare(
-      "INSERT INTO seen (id, ord) VALUES (?, ?) ON CONFLICT(id) DO NOTHING",
-    );
-    next.seen
-      .slice(-MAX_SEEN)
-      .forEach((id, index) => insertSeen.run(id, index + 1));
+    if (next.seen) {
+      db.prepare("DELETE FROM seen").run();
+      const insertSeen = db.prepare(
+        "INSERT INTO seen (id, ord) VALUES (?, ?) ON CONFLICT(id) DO NOTHING",
+      );
+      next.seen
+        .slice(-MAX_SEEN)
+        .forEach((id, index) => insertSeen.run(id, index + 1));
+    }
 
     const insertSeed = db.prepare("INSERT INTO seeds (tag, ord) VALUES (?, ?)");
     [...new Set(next.seeds.map((tag) => tag.trim()).filter(Boolean))].forEach(

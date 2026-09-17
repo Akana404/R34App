@@ -118,6 +118,53 @@ describe("LikesView", () => {
     expect(screen.getByText(/Loading your liked posts/)).toBeTruthy();
   });
 
+  it("offers the backup as a download", () => {
+    render(<LikesView />);
+    const links = screen.getAllByRole("link", { name: /Export/ });
+    expect(links[0].getAttribute("href")).toBe("/api/backup");
+    expect(links[0].hasAttribute("download")).toBe(true);
+  });
+
+  it("imports a backup only after confirming, then reloads", async () => {
+    const upload = vi
+      .fn<(body: unknown) => unknown>()
+      .mockReturnValue({ likes: 2, dismissed: 0, seeds: 0, blocked: 0 });
+    harness.route("/api/backup", (_url, init) => upload(init?.body));
+    const confirm = vi.fn(() => false);
+    vi.stubGlobal("confirm", confirm);
+    const reload = vi.fn();
+    const location = window.location;
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { ...location, reload },
+    });
+
+    try {
+      render(<LikesView />);
+      const user = userEvent.setup();
+      const input = screen.getAllByLabelText("Backup file to import")[0];
+      const file = new File(['{"data":{"likes":[]}}'], "backup.json", {
+        type: "application/json",
+      });
+
+      await user.upload(input as HTMLInputElement, file);
+      expect(confirm).toHaveBeenCalledTimes(1);
+      expect(upload).not.toHaveBeenCalled();
+
+      confirm.mockReturnValue(true);
+      await user.upload(input as HTMLInputElement, file);
+      await harness.settle();
+
+      expect(upload).toHaveBeenCalledWith('{"data":{"likes":[]}}');
+      expect(reload).toHaveBeenCalledTimes(1);
+    } finally {
+      Object.defineProperty(window, "location", {
+        configurable: true,
+        value: location,
+      });
+    }
+  });
+
   it("tells a genuinely empty store apart from a loading one", async () => {
     render(<LikesView />);
     await harness.settle();
