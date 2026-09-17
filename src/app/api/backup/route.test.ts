@@ -27,6 +27,8 @@ beforeEach(() => {
   store.readExport.mockReset();
   store.replaceSnapshot.mockReset();
   vi.spyOn(console, "error").mockImplementation(() => {});
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  vi.spyOn(console, "info").mockImplementation(() => {});
 });
 
 describe("GET /api/backup", () => {
@@ -82,6 +84,9 @@ describe("POST /api/backup", () => {
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ likes: 1, dismissed: 0, seeds: 1, blocked: 0 });
+    expect(console.info).toHaveBeenCalledWith(
+      "[backup] imported 1/1 likes, 0/0 dismissals, 1/1 seed tags, 0/0 blocked tags",
+    );
     const [, snapshot] = store.replaceSnapshot.mock.calls[0];
     expect(Object.keys(snapshot).sort()).toEqual([
       "blocked",

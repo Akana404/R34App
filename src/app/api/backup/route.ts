@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { buildExport, hasBackupContent, normalizeBackup } from "@/lib/backup";
 import { getDb } from "@/lib/db";
+import { logError, logInfo, logWarn } from "@/lib/log";
 import * as store from "@/lib/store";
 
 /**
@@ -29,7 +30,7 @@ export async function GET() {
       },
     });
   } catch (err) {
-    console.error("backup export failed:", err);
+    logError("backup", "export failed", err);
     return NextResponse.json({ error: "state unavailable" }, { status: 500 });
   }
 }
@@ -37,6 +38,7 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   const declared = Number(req.headers.get("content-length"));
   if (declared > MAX_IMPORT_BYTES) {
+    logWarn("backup", `import refused: ${declared} bytes is over the limit (413)`);
     return NextResponse.json({ error: "too large" }, { status: 413 });
   }
 
@@ -48,6 +50,7 @@ export async function POST(req: NextRequest) {
   }
   // The header can be missing or lie; the body can't.
   if (Buffer.byteLength(text) > MAX_IMPORT_BYTES) {
+    logWarn("backup", "import refused: body is over the limit (413)");
     return NextResponse.json({ error: "too large" }, { status: 413 });
   }
 
@@ -55,6 +58,7 @@ export async function POST(req: NextRequest) {
   try {
     body = JSON.parse(text);
   } catch {
+    logWarn("backup", "import refused: body is not valid JSON (400)");
     return NextResponse.json({ error: "invalid body" }, { status: 400 });
   }
 
@@ -62,6 +66,7 @@ export async function POST(req: NextRequest) {
   // one of the fields an import restores.
   const normalized = normalizeBackup(body);
   if (!normalized || !hasBackupContent(normalized.present)) {
+    logWarn("backup", "import refused: no restorable fields in the file (422)");
     return NextResponse.json(
       { error: "nothing recognisable" },
       { status: 422 },
@@ -73,6 +78,15 @@ export async function POST(req: NextRequest) {
     const db = getDb();
     store.replaceSnapshot(db, { likes, dismissed, seeds, blocked });
     const stored = store.readExport(db);
+    // What the store kept, next to what the file offered: caps and the
+    // blocked-tag rules can drop entries on the way in.
+    logInfo(
+      "backup",
+      `imported ${stored.likes.length}/${likes.length} likes, ` +
+        `${stored.dismissed.length}/${dismissed.length} dismissals, ` +
+        `${stored.seeds.length}/${seeds.length} seed tags, ` +
+        `${stored.blocked.length}/${blocked.length} blocked tags`,
+    );
     return NextResponse.json(
       {
         likes: stored.likes.length,
@@ -83,7 +97,7 @@ export async function POST(req: NextRequest) {
       { headers: HEADERS },
     );
   } catch (err) {
-    console.error("backup import failed:", err);
+    logError("backup", "import failed", err);
     return NextResponse.json({ error: "state unavailable" }, { status: 500 });
   }
 }

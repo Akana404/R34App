@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchPosts, NotConfiguredError, UpstreamError } from "@/lib/r34";
+import { logUpstreamFailure } from "@/lib/log";
 import { PAGE_SIZE } from "@/lib/types";
 
 /** The API rejects very long queries; nothing legitimate comes close. */
@@ -24,7 +25,7 @@ export async function GET(req: NextRequest) {
       headers: { "Cache-Control": "private, max-age=60" },
     });
   } catch (err) {
-    console.error("posts proxy failed:", err);
+    logUpstreamFailure("posts", err);
     // Pass rate limiting through as itself: the client backs off instead of
     // telling the user the API is down.
     if (err instanceof UpstreamError && err.status === 429) {

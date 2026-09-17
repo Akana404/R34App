@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { logUpstreamFailure } from "@/lib/log";
 import { fetchAutocomplete } from "@/lib/r34";
 
 export async function GET(req: NextRequest) {
@@ -11,7 +12,7 @@ export async function GET(req: NextRequest) {
       headers: { "Cache-Control": "private, max-age=3600" },
     });
   } catch (err) {
-    console.error("autocomplete proxy failed:", err);
+    logUpstreamFailure("autocomplete", err);
     return NextResponse.json({ error: "upstream request failed" }, { status: 502 });
   }
 }
