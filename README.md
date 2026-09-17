@@ -24,29 +24,54 @@ A modern, locally running web UI for browsing Rule34 content via the [rule34.xxx
 
 ## Setup
 
-> Running this somewhere other than your desktop? A prebuilt image is published
-> for every release as `ghcr.io/akana404/r34app` (`linux/amd64` and
-> `linux/arm64`) — see the deployment guides for
-> [Docker](docs/deployment-docker.md) and [Raspberry Pi](docs/deployment-raspberry.md).
+Either way you run it, you need credentials first: [rule34.xxx → Account →
+Options](https://rule34.xxx/index.php?page=account&s=options) → API Access
+Credentials. Started without them, the app shows these setup steps in place of
+the feed.
 
-1. Get an API key: [rule34.xxx → Account → Options](https://rule34.xxx/index.php?page=account&s=options) → API Access Credentials
-2. Copy `.env.example` to `.env` and fill in the values:
+### With Docker (recommended)
 
-   ```env
-   API_KEY=your_api_key
-   USER_ID=your_user_id
-   ```
+A prebuilt image is published for every release as `ghcr.io/akana404/r34app`,
+for `linux/amd64` and `linux/arm64` — nothing to build, and no Node.js on the
+host. Put two files in an empty directory:
 
-3. Install and run:
+```sh
+curl -O https://raw.githubusercontent.com/Akana404/R34App/main/docker-compose.yaml
+```
 
-   ```sh
-   npm install
-   npm run dev
-   ```
+`.env`, next to it:
 
-4. Open [http://localhost:3000](http://localhost:3000).
+```env
+API_KEY=your_api_key
+USER_ID=your_user_id
+```
 
-Started without credentials, the app shows these setup steps in place of the feed.
+Then:
+
+```sh
+docker compose up -d
+```
+
+Open [http://localhost:3000](http://localhost:3000). Your data lives in the
+named volume `r34app-data` and survives updates (`docker compose pull && docker
+compose up -d`).
+
+More detail — running it on a Raspberry Pi, building the image yourself,
+reading the logs — is in the [Docker guide](docs/deployment-docker.md). To run
+it under systemd without Docker instead, see the
+[Raspberry Pi guide](docs/deployment-raspberry.md).
+
+### From source
+
+```sh
+git clone <repo-url> && cd R34App
+cp .env.example .env    # then fill in API_KEY and USER_ID
+npm install
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000). `npm run build && npm run
+start` for the production server.
 
 ### Your data
 
