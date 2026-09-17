@@ -6,6 +6,7 @@ import { AppHeader } from "@/components/AppHeader";
 import { BackupControls } from "@/components/BackupControls";
 import { SortIcon } from "@/components/icons";
 import { MAX_LIKES, useLikedPosts, useMobileColumns } from "@/lib/prefs";
+import { tagsOf } from "@/lib/state";
 
 const BUTTON =
   "flex min-h-11 w-full items-center justify-center gap-1.5 rounded-lg border border-neutral-700 bg-neutral-900 px-3 text-sm whitespace-nowrap text-neutral-300 hover:border-neutral-500 sm:min-h-0 sm:w-auto sm:py-1.5";
@@ -28,7 +29,7 @@ export function LikesView() {
         (like) =>
           terms.length === 0 ||
           terms.every((term) =>
-            like.tags.some((tag) => tag.toLowerCase().includes(term)),
+            tagsOf(like.post!).some((tag) => tag.toLowerCase().includes(term)),
           ),
       )
       .sort((a, b) =>

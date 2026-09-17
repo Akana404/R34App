@@ -4,7 +4,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Post } from "@/lib/types";
 import type { LikedPost } from "@/lib/prefs";
-import { installStore } from "@/test/store";
+import { installStore, type StoreHarness } from "@/test/store";
 
 // The feed's logic lives in the props it hands PostGrid (filterPost,
 // rankPost, getPageQueries, feedId); capture them instead of fetching.
@@ -48,19 +48,24 @@ function like(id: number, tags: string[], likedAt = Date.now() - 1000): LikedPos
   return { id, tags, score: 50, rating: "explicit", likedAt };
 }
 
+let harness: StoreHarness;
+
 function seedLikes(likes: LikedPost[]) {
-  installStore({ likes });
+  harness = installStore({ likes });
 }
 
-function renderFeed() {
+/** The tags the profile is built from arrive in their own request. */
+async function renderFeed() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  return render(
+  const view = render(
     <QueryClientProvider client={client}>
       <ForYouFeed />
     </QueryClientProvider>,
   );
+  await harness.settle();
+  return view;
 }
 
 /**
@@ -78,7 +83,7 @@ const armedLikes = () => [
 
 beforeEach(() => {
   localStorage.clear();
-  installStore();
+  harness = installStore();
   grid = null;
 });
 
@@ -88,33 +93,33 @@ afterEach(() => {
 });
 
 describe("ForYouFeed", () => {
-  it("shows the hint instead of a feed while there is no taste at all", () => {
-    renderFeed();
+  it("shows the hint instead of a feed while there is no taste at all", async () => {
+    await renderFeed();
     expect(screen.getByText(/like posts while browsing/i)).toBeTruthy();
     expect(screen.queryByTestId("post-grid")).toBeNull();
   });
 
-  it("builds a feed from seed tags alone", () => {
-    installStore({ seeds: ["miku_(vocaloid)"] });
-    renderFeed();
+  it("builds a feed from seed tags alone", async () => {
+    harness = installStore({ seeds: ["miku_(vocaloid)"] });
+    await renderFeed();
     expect(screen.queryByTestId("post-grid")).toBeTruthy();
     const queries = grid!.getPageQueries!(0);
     expect(queries.length).toBeGreaterThan(0);
     expect(queries.some((q) => q.tags.includes("miku_(vocaloid)"))).toBe(true);
   });
 
-  it("keeps the gate open while the profile is still thin", () => {
+  it("keeps the gate open while the profile is still thin", async () => {
     // Below GATE_MIN_LIKES the gate must not filter a fresh user's feed.
     seedLikes([like(1, ["miku_(vocaloid)", "vocaloid"])]);
-    renderFeed();
+    await renderFeed();
     expect(grid!.filterPost!(post(100, "completely unrelated tags"))).toBe(
       true,
     );
   });
 
-  it("gates unrelated posts out once the profile is meaningful", () => {
+  it("gates unrelated posts out once the profile is meaningful", async () => {
     seedLikes(armedLikes());
-    renderFeed();
+    await renderFeed();
     expect(grid!.filterPost!(post(100, "unrelated other things entirely"))).toBe(
       false,
     );
@@ -123,13 +128,13 @@ describe("ForYouFeed", () => {
     ).toBe(true);
   });
 
-  it("hides posts liked before this feed run but not ones liked during it", () => {
+  it("hides posts liked before this feed run but not ones liked during it", async () => {
     seedLikes([
       ...armedLikes(),
       // Stamped after the feed epoch, the way a mid-scroll like is.
       like(200, ["miku_(vocaloid)"], Date.now() + 60_000),
     ]);
-    renderFeed();
+    await renderFeed();
     // Liked before the feed mounted: already known, keep it out.
     expect(grid!.filterPost!(post(1, "miku_(vocaloid) vocaloid twintails"))).toBe(
       false,
@@ -140,9 +145,9 @@ describe("ForYouFeed", () => {
     ).toBe(true);
   });
 
-  it("down-ranks posts the feed has shown before instead of hiding them", () => {
-    installStore({ likes: armedLikes(), seen: [300] });
-    renderFeed();
+  it("down-ranks posts the feed has shown before instead of hiding them", async () => {
+    harness = installStore({ likes: armedLikes(), seen: [300] });
+    await renderFeed();
     const fresh = grid!.rankPost!(post(301, "miku_(vocaloid) vocaloid"));
     const repeat = grid!.rankPost!(post(300, "miku_(vocaloid) vocaloid"));
     expect(repeat).toBeCloseTo(fresh * 0.5);
@@ -151,18 +156,18 @@ describe("ForYouFeed", () => {
     );
   });
 
-  it("passes dismissals through as immediate exclusions", () => {
-    installStore({
+  it("passes dismissals through as immediate exclusions", async () => {
+    harness = installStore({
       likes: armedLikes(),
       dismissed: [{ id: 400, tags: ["x"], dismissedAt: Date.now() }],
     });
-    renderFeed();
+    await renderFeed();
     expect(grid!.excludeIds!.has(400)).toBe(true);
   });
 
-  it("keeps the feed identity stable until the seeds change", () => {
-    installStore({ seeds: ["vocaloid"] });
-    const view = renderFeed();
+  it("keeps the feed identity stable until the seeds change", async () => {
+    harness = installStore({ seeds: ["vocaloid"] });
+    const view = await renderFeed();
     const before = grid!.feedId;
     view.rerender(
       <QueryClientProvider client={new QueryClient()}>

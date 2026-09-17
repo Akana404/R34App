@@ -11,7 +11,6 @@ import { Providers } from "./providers";
 const EMPTY_STATE: AppSnapshot = {
   likes: [],
   dismissed: [],
-  seen: [],
   seeds: [],
   blocked: [],
 };

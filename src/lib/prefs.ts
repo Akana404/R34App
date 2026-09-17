@@ -7,7 +7,10 @@ import {
   tagsOf,
   type AppSnapshot,
   type DismissedPost,
+  type DismissRef,
   type LikedPost,
+  type LikeRef,
+  type TasteProfile,
 } from "@/lib/state";
 import type { Post } from "@/lib/types";
 import type { MobileColumns } from "@/components/PostGrid";
@@ -17,8 +20,14 @@ export {
   MAX_DISMISSED,
   MAX_LIKES,
   MAX_SEEN,
+  TASTE_WINDOW,
 } from "@/lib/state";
-export type { DismissedPost, LikedPost } from "@/lib/state";
+export type {
+  DismissedPost,
+  DismissRef,
+  LikedPost,
+  LikeRef,
+} from "@/lib/state";
 
 /**
  * The app's state, as the browser sees it.
@@ -146,17 +155,18 @@ export function useRating(): [Rating, (next: Rating) => void] {
 // Server-backed content state
 // ---------------------------------------------------------------------------
 
-const NO_LIKES: LikedPost[] = [];
-const NO_DISMISSED: DismissedPost[] = [];
+const NO_LIKES: LikeRef[] = [];
+const NO_DISMISSED: DismissRef[] = [];
 const NO_TAGS: string[] = [];
 
-type ContentState = Omit<AppSnapshot, "seen">;
+type ContentState = AppSnapshot;
 
 let content: ContentState | null = null;
 /**
  * Kept apart from `content` because it is read and written outside React —
  * a feed that re-ranked as its own posts became "seen" would reshuffle
- * itself under the reader.
+ * itself under the reader. Arrives with the taste profile, since the For You
+ * feed is the only reader.
  */
 let seenIds: Set<number> | null = null;
 
@@ -186,7 +196,6 @@ export function hydrateContent(snapshot: AppSnapshot) {
     seeds: snapshot.seeds,
     blocked: snapshot.blocked,
   };
-  seenIds = new Set(snapshot.seen);
 }
 
 /**
@@ -203,6 +212,11 @@ export function resetContent() {
   likePostsPending = null;
   likePostsVersion++;
   joinCache = null;
+  taste = null;
+  tasteLoaded = false;
+  tastePending = null;
+  sessionLikes.clear();
+  sessionDismissals.clear();
   for (const slice of Object.keys(tickets) as Slice[]) tickets[slice] = 0;
 }
 
@@ -262,6 +276,9 @@ const tickets: Record<Slice, number> = {
 function applySlice<K extends Slice>(key: K, value: ContentState[K]) {
   if (!content || content[key] === value) return;
   content = { ...content, [key]: value };
+  if (key === "likes" || key === "dismissed") {
+    dropTasteEntriesGone(key, value as { id: number }[]);
+  }
   notifyContent();
 }
 
@@ -337,23 +354,145 @@ export function useLikes() {
     // succession don't clobber each other.
     const current = content?.likes;
     if (!current) return;
-    const next = current.some((like) => like.id === post.id)
+    const liked = current.some((like) => like.id === post.id);
+    const likedAt = Date.now();
+    const next = liked
       ? current.filter((like) => like.id !== post.id)
-      : [
-          ...current,
-          {
-            id: post.id,
-            tags: tagsOf(post),
-            score: post.score,
-            rating: post.rating,
-            likedAt: Date.now(),
-          },
-        ].slice(-MAX_LIKES);
+      : [...current, { id: post.id, likedAt }].slice(-MAX_LIKES);
     rememberLikePost(post);
+    // The profile is derived from the same change, but it is never refetched
+    // for it: the tags of the post in hand are exactly what it would say.
+    if (liked) forgetTasteLike(post.id);
+    else rememberTasteLike(post, likedAt);
     mutateSlice("likes", next, { action: "toggleLike", post });
   }, []);
 
   return { likes, likedIds, isLiked, toggleLike };
+}
+
+// ---------------------------------------------------------------------------
+// The taste profile: tags, fetched only where a profile is built
+// ---------------------------------------------------------------------------
+
+const NO_TASTE: TasteProfile = { likes: [], dismissed: [], seen: [] };
+
+let taste: TasteProfile | null = null;
+let tasteLoaded = false;
+let tastePending: Promise<void> | null = null;
+
+/**
+ * Entries this session created. The fetched window is a snapshot of the
+ * server as it was when the request went out, so a like made while it was in
+ * flight has to be merged back in — losing it would quietly drop a tag the
+ * profile was just taught.
+ */
+const sessionLikes = new Map<number, LikedPost>();
+const sessionDismissals = new Map<number, DismissedPost>();
+
+function mergeSession(profile: TasteProfile): TasteProfile {
+  const likeIds = new Set(profile.likes.map((like) => like.id));
+  const dismissedIds = new Set(profile.dismissed.map((entry) => entry.id));
+  return {
+    seen: profile.seen,
+    likes: [
+      ...profile.likes,
+      ...[...sessionLikes.values()].filter((like) => !likeIds.has(like.id)),
+    ],
+    dismissed: [
+      ...profile.dismissed,
+      ...[...sessionDismissals.values()].filter(
+        (entry) => !dismissedIds.has(entry.id),
+      ),
+    ],
+  };
+}
+
+function loadTaste(): Promise<void> {
+  if (tasteLoaded) return Promise.resolve();
+  tastePending ??= fetch("/api/state?part=taste")
+    .then((res) => {
+      if (!res.ok) throw new Error(`taste profile failed with ${res.status}`);
+      return res.json() as Promise<TasteProfile>;
+    })
+    .then((profile) => {
+      taste = mergeSession(profile);
+      // Merged, never replaced: ids recorded while the request was in flight
+      // are already in here and must not be forgotten.
+      seenIds = new Set([...(seenIds ?? []), ...profile.seen]);
+      tasteLoaded = true;
+      notifyContent();
+    })
+    .catch(() => {
+      // The feed falls back to its seed tags; a reload retries.
+      tastePending = null;
+    });
+  return tastePending;
+}
+
+function rememberTasteLike(post: Post, likedAt: number) {
+  const like: LikedPost = {
+    id: post.id,
+    tags: tagsOf(post),
+    score: post.score,
+    rating: post.rating,
+    likedAt,
+  };
+  sessionLikes.set(post.id, like);
+  if (taste) taste = { ...taste, likes: [...taste.likes, like] };
+}
+
+function forgetTasteLike(id: number) {
+  sessionLikes.delete(id);
+  if (!taste) return;
+  taste = { ...taste, likes: taste.likes.filter((like) => like.id !== id) };
+}
+
+function rememberTasteDismissal(post: Post, dismissedAt: number) {
+  const entry: DismissedPost = { id: post.id, tags: tagsOf(post), dismissedAt };
+  sessionDismissals.set(post.id, entry);
+  if (taste) taste = { ...taste, dismissed: [...taste.dismissed, entry] };
+}
+
+/**
+ * Keeps the profile in step with an authoritative slice: an entry the server
+ * no longer has (evicted by a cap, or undismissed) must stop weighing in.
+ */
+function dropTasteEntriesGone(
+  key: "likes" | "dismissed",
+  refs: { id: number }[],
+) {
+  const session = key === "likes" ? sessionLikes : sessionDismissals;
+  const ids = new Set(refs.map((ref) => ref.id));
+  for (const id of session.keys()) if (!ids.has(id)) session.delete(id);
+  if (!taste) return;
+  const kept = taste[key].filter((entry) => ids.has(entry.id));
+  if (kept.length !== taste[key].length) {
+    taste = { ...taste, [key]: kept };
+  }
+}
+
+/**
+ * The tags behind the newest likes and dismissals, for the pages that build a
+ * taste profile. `loading` is what keeps the For You feed from flashing its
+ * cold-start hint at somebody who has hundreds of likes.
+ */
+export function useTaste(): TasteProfile & { loading: boolean } {
+  useEffect(() => {
+    void loadTaste();
+  }, []);
+
+  const profile = useSyncExternalStore(
+    subscribeToContent,
+    () => taste ?? NO_TASTE,
+    () => NO_TASTE,
+  );
+  const loading = useSyncExternalStore(
+    subscribeToContent,
+    () => !tasteLoaded,
+    () => true,
+  );
+
+  return { ...profile, loading };
 }
 
 // The full posts behind the likes: far heavier than the rest of the state and
@@ -389,13 +528,18 @@ function loadLikePosts(): Promise<void> {
   return likePostsPending;
 }
 
+/** A like as the Liked view sees it: its ref, with the post once it arrives. */
+export interface LikedEntry extends LikeRef {
+  post?: Post;
+}
+
 let joinCache: {
-  likes: LikedPost[];
+  likes: LikeRef[];
   version: number;
-  value: LikedPost[];
+  value: LikedEntry[];
 } | null = null;
 
-function likedWithPosts(): LikedPost[] {
+function likedWithPosts(): LikedEntry[] {
   const likes = content?.likes ?? NO_LIKES;
   if (
     joinCache &&
@@ -412,7 +556,7 @@ function likedWithPosts(): LikedPost[] {
 }
 
 /** The likes with their posts attached, for the Liked view. */
-export function useLikedPosts(): { likes: LikedPost[]; loading: boolean } {
+export function useLikedPosts(): { likes: LikedEntry[]; loading: boolean } {
   useEffect(() => {
     void loadLikePosts();
   }, []);
@@ -439,11 +583,12 @@ export function useDismissed() {
   const dismiss = useCallback((post: Post) => {
     const current = content?.dismissed;
     if (!current || current.some((entry) => entry.id === post.id)) return;
-    const next = [
-      ...current,
-      { id: post.id, tags: tagsOf(post), dismissedAt: Date.now() },
-    ];
-    mutateSlice("dismissed", next, { action: "dismiss", post });
+    const dismissedAt = Date.now();
+    rememberTasteDismissal(post, dismissedAt);
+    mutateSlice("dismissed", [...current, { id: post.id, dismissedAt }], {
+      action: "dismiss",
+      post,
+    });
   }, []);
 
   const undismiss = useCallback((id: number) => {
@@ -501,7 +646,10 @@ export function readSeen(): Set<number> {
 }
 
 export function recordSeen(ids: number[]) {
-  if (typeof window === "undefined" || !seenIds) return;
+  if (typeof window === "undefined") return;
+  // Before the profile lands there is nothing to deduplicate against; the
+  // insert is idempotent server-side, so send them and let it sort them out.
+  seenIds ??= new Set();
   const fresh = ids.filter((id) => !seenIds!.has(id));
   if (fresh.length === 0) return;
   for (const id of fresh) seenIds.add(id);

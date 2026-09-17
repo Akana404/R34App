@@ -18,6 +18,7 @@ import {
   useRating,
   useSeedTags,
   useStorageWarning,
+  useTaste,
 } from "@/lib/prefs";
 import {
   readBlockedTags,
@@ -71,12 +72,13 @@ describe("useLikes", () => {
     act(() => result.current.toggleLike(post(1, "miku 1girls")));
 
     expect(result.current.isLiked(1)).toBe(true);
-    expect(result.current.likes[0]).toMatchObject({
-      id: 1,
-      tags: ["miku", "1girls"],
-    });
+    // The mirror holds a ref; the tags and the post stay on the server until
+    // a view asks for them.
+    expect(result.current.likes[0]).toMatchObject({ id: 1 });
+    expect(result.current.likes[0]).not.toHaveProperty("tags");
 
     await harness.settle();
+    expect(readLikes(harness.db)[0].tags).toEqual(["miku", "1girls"]);
     expect(readLikePosts(harness.db)[0].file_url).toBe("f");
   });
 
@@ -173,18 +175,81 @@ describe("a write that cannot be saved", () => {
   });
 });
 
+describe("useTaste", () => {
+  const liked = (id: number, tags: string[], likedAt: number) => ({
+    id,
+    tags,
+    score: 1,
+    rating: "explicit",
+    likedAt,
+  });
+
+  it("loads the tags separately from the refs every page is hydrated with", async () => {
+    start({ likes: [liked(1, ["miku", "vocaloid"], 10)] });
+    const { result } = renderHook(() => useTaste());
+
+    // First frame: the refs are there, their tags are not.
+    expect(result.current.loading).toBe(true);
+    expect(result.current.likes).toEqual([]);
+
+    await harness.settle();
+
+    expect(result.current.loading).toBe(false);
+    expect(result.current.likes[0]).toMatchObject({
+      id: 1,
+      tags: ["miku", "vocaloid"],
+    });
+  });
+
+  it("keeps a like made while the profile was still loading", async () => {
+    const { result: likes } = renderHook(() => useLikes());
+    const { result: taste } = renderHook(() => useTaste());
+    // Liked before the taste request came back: the answer predates it, so
+    // merging is the only thing that keeps its tags in the profile.
+    act(() => likes.current.toggleLike(post(7, "kagamine_rin vocaloid")));
+    await harness.settle();
+
+    expect(taste.current.likes.map((like) => like.id)).toEqual([7]);
+    expect(taste.current.likes[0].tags).toEqual(["kagamine_rin", "vocaloid"]);
+  });
+
+  it("stops weighing a like the store no longer has", async () => {
+    start({ likes: [liked(1, ["miku"], 10)] });
+    const { result: likes } = renderHook(() => useLikes());
+    const { result: taste } = renderHook(() => useTaste());
+    await harness.settle();
+    expect(taste.current.likes).toHaveLength(1);
+
+    act(() => likes.current.toggleLike(post(1, "miku")));
+    await harness.settle();
+
+    expect(taste.current.likes).toEqual([]);
+  });
+
+  it("drops a dismissal from the profile when it is cleared", async () => {
+    const { result: dismissed } = renderHook(() => useDismissed());
+    const { result: taste } = renderHook(() => useTaste());
+    act(() => dismissed.current.dismiss(post(5, "x y")));
+    await harness.settle();
+    expect(taste.current.dismissed[0].tags).toEqual(["x", "y"]);
+
+    act(() => dismissed.current.clearDismissed());
+    await harness.settle();
+
+    expect(taste.current.dismissed).toEqual([]);
+  });
+});
+
 describe("useDismissed", () => {
   it("records a dismissal with its tags", async () => {
     const { result } = renderHook(() => useDismissed());
     act(() => result.current.dismiss(post(5, "x y")));
     await harness.settle();
 
-    expect(result.current.dismissed[0]).toMatchObject({
-      id: 5,
-      tags: ["x", "y"],
-    });
+    expect(result.current.dismissed[0]).toMatchObject({ id: 5 });
     expect(result.current.dismissedIds.has(5)).toBe(true);
-    expect(readDismissed(harness.db)).toHaveLength(1);
+    // The tags go to the store, which is where the taste profile reads them.
+    expect(readDismissed(harness.db)[0].tags).toEqual(["x", "y"]);
   });
 
   it("ignores a repeat dismissal of the same post", async () => {
