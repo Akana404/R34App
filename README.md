@@ -15,15 +15,16 @@ A modern, locally running web UI for browsing Rule34 content via the [rule34.xxx
 - **Masonry grid** — responsive 1–5 columns (with a 1/2-column toggle on phones), lazy loading, video/GIF badges, hover actions (like, not interested, more like this)
 - **Infinite scroll** — loads more automatically (100 posts per page), deduplicated by post ID; a failed later page never discards what is already on screen
 - **Lightbox** — fullscreen viewer with keyboard (←/→, `i`, Esc) and swipe navigation, inline video playback, category-coloured tag list, and its own feed paging so you can browse past the loaded posts
-- **For You feed** — pure client-side recommendations built from your likes and seed tags: rare and identifying tags weigh more, dismissals count against, repeats get down-ranked; reproducible until you hit Shuffle
-- **Likes** — capped at 500, browsable on their own page, with near-cap warning
+- **For You feed** — pure client-side recommendations built from your likes and seed tags: rare and identifying tags weigh more, dismissals count against, repeats get down-ranked; reproducible until you hit Shuffle. The profile is built from your 500 newest likes and dismissals — older ones are still stored, they just stop steering the feed
+- **Likes** — capped at 2000, browsable on their own page, with near-cap warning
+- **Export and import** — your data as one JSON file, from the Liked page
 - **Content filters** — rating filter, blocked tags, and a hide-AI toggle, applied to every feed upstream in the query
 - **Shared across your browsers** — likes, dismissals, seed and blocked tags and the learned tag metadata live in a local SQLite file next to the app, so every browser and device pointing at the same instance sees the same data. No accounts and no login: one dataset per running instance
 - **API proxy** — the browser only talks to local routes; the API key stays server-side and never appears in the client
 
 ## Setup
 
-> Running this somewhere other than your desktop? See the deployment guides for [Docker](docs/deployment-docker.md) and [Raspberry Pi](docs/deplyoment-raspberry.md).
+> Running this somewhere other than your desktop? See the deployment guides for [Docker](docs/deployment-docker.md) and [Raspberry Pi](docs/deployment-raspberry.md).
 
 1. Get an API key: [rule34.xxx → Account → Options](https://rule34.xxx/index.php?page=account&s=options) → API Access Credentials
 2. Copy `.env.example` to `.env` and fill in the values:
@@ -49,14 +50,24 @@ Started without credentials, the app shows these setup steps in place of the fee
 Everything the app remembers is written to `data/r34-browser.sqlite` (override
 with `DB_PATH` in `.env`). The file is created on first run. Delete it to start over.
 
-To back up or move your data, use **Export** and **Import** on the Liked page.
-Export downloads a JSON file with your likes (including the posts), dismissals,
-seed tags and blocked tags. Import replaces all of those with the contents of a
-file, after asking you to confirm. The caches (posts already shown in For You and
-tag metadata) are not included and rebuild themselves. Copying the SQLite file
-works as a backup too. Only the three per-browser
-display switches — mobile column count, hide-AI, and the rating filter — stay in
-that browser's `localStorage`.
+To back up or move your data, use **Export** and **Import** on the Liked page
+(on a phone they sit in the settings sheet behind the slider icon). Export
+downloads `r34-browser-<date>.json` with your likes — the posts included — plus
+dismissals, seed tags and blocked tags. Import replaces all four with the
+contents of a file, after asking you to confirm, and reloads the page. It
+refuses a file that holds none of them, so a wrong pick can't wipe your data.
+
+Not in the file, and untouched by an import: the ids For You has already shown
+and the learned tag metadata. Both are caches and rebuild themselves. Copying
+the SQLite file works as a backup too — in Docker the file lives in a volume,
+which is what Export is for.
+
+Only the three per-browser display switches — mobile column count, hide-AI, and
+the rating filter — stay in that browser's `localStorage`.
+
+**What is kept:** 2000 likes, 1000 dismissals, 2000 "already shown" ids, 25
+blocked tags, 8000 tags of metadata. Past a limit the oldest entry is dropped
+for each new one; the Liked page warns you before that starts.
 
 Coming from an older build that kept everything in `localStorage`? Export that
 JSON, drop it in `old/`, and run it in once:
@@ -84,8 +95,8 @@ refusing the whole file.
 ```
 Browser (React UI, mirroring the server state in memory)
    │  /api/posts?tags=...&page=N        /api/state          (GET + POST)
-   │  /api/autocomplete?q=...              │
-   ▼                                       ▼
+   │  /api/autocomplete?q=...           /api/backup         (export + import)
+   ▼                                       │
 Next.js Route Handlers (localhost)    data/r34-browser.sqlite
    │  + api_key & user_id from .env
    ▼
@@ -106,10 +117,13 @@ src/
     api/posts/route.ts        # Proxy: post search (dapi, json=1)
     api/autocomplete/route.ts # Proxy: tag autocomplete
     api/state/route.ts        # The stored state: snapshot + one mutation
+    api/backup/route.ts       # Export (GET) and import (POST) as one JSON file
   lib/
     r34.ts                    # Server-side API client
     types.ts                  # Zod schemas + types
     state.ts                  # Shared row types and caps
+    backup.ts                 # The backup format and its one parser
+    log.ts                    # One-line server log events
     db.ts                     # SQLite handle + schema
     store.ts                  # Every read/write, caps enforced in SQL
     prefs.ts                  # Client mirror + the browser-local switches
@@ -122,6 +136,7 @@ src/
     Lightbox.tsx              # Fullscreen viewer
     ForYouFeed.tsx            # Recommendation feed page body
     LikesView.tsx             # Liked page body
+    BackupControls.tsx        # Export / import buttons
     AppHeader.tsx / BottomNav.tsx / ControlSheet.tsx  # Shared chrome
 ```
 

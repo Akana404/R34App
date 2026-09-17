@@ -79,6 +79,11 @@ sudo systemctl status r34-browser
 journalctl -u r34-browser -f
 ```
 
+Expect a quiet log: Next.js logs no requests in production, and the app only
+writes a line for something worth knowing — rate limiting by the rule34 API
+(429), missing credentials, an upstream error or timeout, and every backup
+import with the counts it kept.
+
 ## 6. Access on the network
 
 Next.js listens on port 3000 by default. From another device on the LAN:
@@ -99,4 +104,6 @@ npm run build
 sudo systemctl restart r34-browser
 ```
 
-The SQLite file under `data/` (or `DB_PATH`) is the backup — copy it before major updates.
+Use **Export** on the Liked page to pull your likes, dismissals, seed and
+blocked tags off the Pi as a JSON file, and **Import** to put them back.
+Copying the SQLite file under `data/` (or `DB_PATH`) works as a backup too.
