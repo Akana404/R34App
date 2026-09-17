@@ -48,6 +48,12 @@ Check logs:
 docker compose logs -f
 ```
 
+The server stays quiet by design: Next.js logs no requests in production, and
+the app only writes a line when something is worth knowing — rate limiting by
+the rule34 API (429), missing credentials, an upstream error or timeout, and
+every backup import with the counts it kept. No news really is good news here.
+Add `-t` if you want timestamps.
+
 ## 3. Access on the network
 
 From another device on the LAN:
@@ -65,3 +71,8 @@ docker compose up -d --build
 ```
 
 The named volume `r34app-data` preserves your likes, dismissals, seed/blocked tags, and tag metadata across updates.
+
+To get your data off the container — before a rebuild, or to move to another
+machine — use **Export** on the Liked page. That downloads everything but the
+caches as a JSON file, and **Import** puts it back. Reaching into the volume for
+the SQLite file works too, but the buttons don't need a shell.
