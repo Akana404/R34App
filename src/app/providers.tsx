@@ -2,7 +2,6 @@
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
-import { TagMetaSync } from "@/components/TagMetaSync";
 import { hydrateContent } from "@/lib/prefs";
 import type { AppSnapshot } from "@/lib/state";
 
@@ -33,7 +32,6 @@ export function Providers({
   return (
     <QueryClientProvider client={client}>
       {children}
-      <TagMetaSync />
     </QueryClientProvider>
   );
 }

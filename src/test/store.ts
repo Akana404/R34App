@@ -3,7 +3,7 @@ import { act } from "@testing-library/react";
 import { vi, type Mock } from "vitest";
 import { createSchema, type Db } from "@/lib/db";
 import { hydrateContent, resetContent } from "@/lib/prefs";
-import type { AppSnapshot } from "@/lib/state";
+import type { StoreContent } from "@/lib/state";
 import * as store from "@/lib/store";
 import { resetTagMeta } from "@/lib/tagmeta";
 
@@ -30,7 +30,8 @@ export interface StoreHarness {
   settle(): Promise<void>;
 }
 
-export interface Seed extends Partial<AppSnapshot> {
+export interface Seed extends Partial<StoreContent> {
+  seen?: number[];
   tagMeta?: store.TagMetaEntry[];
 }
 
@@ -56,6 +57,7 @@ export function installStore(seed: Seed = {}): StoreHarness {
       const part = url.searchParams.get("part");
       if (part === "likePosts") return store.readLikePosts(db);
       if (part === "tagMeta") return store.readTagMeta(db);
+      if (part === "taste") return store.readTaste(db);
       return store.readSnapshot(db);
     }
     if (writesBroken) throw new Error("write failed");

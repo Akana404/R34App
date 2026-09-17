@@ -9,6 +9,10 @@ import { postSchema, tagInfoSchema } from "@/lib/types";
  * The persisted app state: likes, dismissals, seen posts, seed and blocked
  * tags, tag metadata. No auth and no user column — one dataset per server.
  *
+ * `GET` answers with refs (id and timestamp) by default; the heavier parts —
+ * the liked posts, the tag metadata, the tags the taste profile needs — are
+ * asked for by name, so a page only pays for what it renders.
+ *
  * Every mutation answers with the authoritative slice it changed, so the
  * client can reconcile the optimistic update it already painted with what
  * the store actually kept after its caps ran.
@@ -45,6 +49,12 @@ export async function GET(req: NextRequest) {
     }
     if (part === "tagMeta") {
       return NextResponse.json(store.readTagMeta(db), { headers: HEADERS });
+    }
+    // The tags behind the newest likes and dismissals: an order of magnitude
+    // heavier than the refs, and only the two pages that build a taste
+    // profile from them ask.
+    if (part === "taste") {
+      return NextResponse.json(store.readTaste(db), { headers: HEADERS });
     }
     return NextResponse.json(store.readSnapshot(db), { headers: HEADERS });
   } catch (err) {

@@ -19,6 +19,7 @@ import {
   useMobileColumns,
   useRating,
   useSeedTags,
+  useTaste,
 } from "@/lib/prefs";
 import {
   applyDismissals,
@@ -31,6 +32,7 @@ import {
   scorePost,
   topWeightedTags,
 } from "@/lib/recommend";
+import { TagMetaSync } from "@/components/TagMetaSync";
 import { useTagMeta } from "@/lib/tagmeta";
 
 function newShuffleSeed(): number {
@@ -44,8 +46,16 @@ const GATE_MIN_PROFILE_TAGS = 4;
 
 export function ForYouFeed() {
   const { seeds, setSeeds } = useSeedTags();
+  // Refs for what is liked, the taste window for what it means: the tags
+  // arrive in their own request, which is why this page has a loading state
+  // and the others don't.
   const { likes } = useLikes();
-  const { dismissed, dismissedIds, clearDismissed } = useDismissed();
+  const { dismissedIds, clearDismissed } = useDismissed();
+  const {
+    likes: tasteLikes,
+    dismissed,
+    loading: tasteLoading,
+  } = useTaste();
   const [mobileColumns] = useMobileColumns();
   const [hideAi] = useHideAi();
   const [rating] = useRating();
@@ -60,17 +70,17 @@ export function ForYouFeed() {
   // Two profiles: `weights` scores every post (recency-decayed, unpruned),
   // `directions` is the narrower pool the feed actually searches on.
   const weights = useMemo(
-    () => computeTagWeights(likes, tagMeta),
-    [likes, tagMeta],
+    () => computeTagWeights(tasteLikes, tagMeta),
+    [tasteLikes, tagMeta],
   );
   const directions = useMemo(
-    () => computeDirectionWeights(likes, tagMeta),
-    [likes, tagMeta],
+    () => computeDirectionWeights(tasteLikes, tagMeta),
+    [tasteLikes, tagMeta],
   );
   const likedTop = useMemo(() => topWeightedTags(directions, 20), [directions]);
   const pairs = useMemo(
-    () => computeTagPairs(likes, directions),
-    [likes, directions],
+    () => computeTagPairs(tasteLikes, directions),
+    [tasteLikes, directions],
   );
 
   // Scoring profile: every learned tag, minus what dismissals argue against,
@@ -88,7 +98,10 @@ export function ForYouFeed() {
   // A post must match at least a median-weight tag of the profile — one weak
   // tag in common isn't enough, a pair match or a strong tag/seed passes.
   const gateThreshold = useMemo(() => {
-    if (likes.length < GATE_MIN_LIKES || profile.size < GATE_MIN_PROFILE_TAGS) {
+    if (
+      tasteLikes.length < GATE_MIN_LIKES ||
+      profile.size < GATE_MIN_PROFILE_TAGS
+    ) {
       return 0;
     }
     // Median over the positive weights only — dismissal penalties make some
@@ -98,7 +111,7 @@ export function ForYouFeed() {
       .sort((a, b) => a - b);
     if (sorted.length === 0) return 0;
     return sorted[Math.floor(sorted.length / 2)];
-  }, [likes.length, profile]);
+  }, [tasteLikes.length, profile]);
 
   const likedAtById = useMemo(
     () => new Map(likes.map((like) => [like.id, like.likedAt])),
@@ -118,7 +131,9 @@ export function ForYouFeed() {
   // Snapshot of what earlier feed runs already showed, taken once per run:
   // a live set would re-rank posts as they are marked seen, moving them
   // under the reader.
-  const seenBefore = useMemo(() => readSeen(), [feedId]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Re-snapshotted when the profile lands, because the seen ids ride along
+  // with it — before that there is nothing to read.
+  const seenBefore = useMemo(() => readSeen(), [feedId, tasteLoading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Stable identities: PostGrid memoises the assembled post list on these,
   // so inline arrows would rebuild (and re-sort) it on every render.
@@ -142,6 +157,7 @@ export function ForYouFeed() {
 
   return (
     <main className="mx-auto w-full max-w-[1800px] px-4 pb-24 sm:pb-12">
+      <TagMetaSync />
       <AppHeader
         controlsActive={hideAi || showTaste || rating !== "" || blocked.length > 0}
         controls={
@@ -173,7 +189,7 @@ export function ForYouFeed() {
         }
       />
 
-      {(showTaste || !hasTaste) && (
+      {(showTaste || (!hasTaste && !tasteLoading)) && (
         <section className="mb-6 rounded-xl border border-neutral-800 bg-neutral-900/40 p-4">
           <h2 className="mb-2 text-sm font-semibold text-neutral-300">
             Seed tags
@@ -203,7 +219,8 @@ export function ForYouFeed() {
           {likedTop.length > 0 && (
             <>
               <h2 className="mb-2 mt-4 text-sm font-semibold text-neutral-300">
-                Learned from {likes.length} like{likes.length === 1 ? "" : "s"}
+                Learned from {tasteLikes.length} like
+                {tasteLikes.length === 1 ? "" : "s"}
               </h2>
               <div className="flex flex-wrap gap-1.5">
                 {likedTop.slice(0, 12).map(({ tag, weight }) => (
@@ -223,7 +240,11 @@ export function ForYouFeed() {
         </section>
       )}
 
-      {hasTaste ? (
+      {tasteLoading ? (
+        <p className="py-16 text-center text-neutral-500">
+          Reading your taste…
+        </p>
+      ) : hasTaste ? (
         <PostGrid
           tags={[]}
           mobileColumns={mobileColumns}

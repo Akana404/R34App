@@ -7,6 +7,7 @@ import {
   MAX_LIKES,
   MAX_SEEN,
   MAX_TAGS,
+  TASTE_WINDOW,
 } from "@/lib/state";
 import {
   clearDismissed,
@@ -20,6 +21,7 @@ import {
   readSeen,
   readSnapshot,
   readTagMeta,
+  readTaste,
   recordSeen,
   recordTagInfo,
   replaceSnapshot,
@@ -97,7 +99,8 @@ describe("dismissed", () => {
     const twice = dismiss(db, post(1));
 
     expect(twice).toHaveLength(1);
-    expect(twice[0]).toMatchObject({ id: 1, tags: ["artist_a", "character_b"] });
+    expect(twice[0]).toMatchObject({ id: 1 });
+    expect(readDismissed(db)[0].tags).toEqual(["artist_a", "character_b"]);
   });
 
   it("undismisses and clears", () => {
@@ -203,10 +206,62 @@ describe("readSnapshot", () => {
     expect(readSnapshot(db)).toMatchObject({
       likes: [{ id: 1 }],
       dismissed: [{ id: 2 }],
-      seen: [3],
       seeds: ["seed"],
       blocked: ["gore"],
     });
+    // The seen ids travel with the taste profile, not with every page.
+    expect(readSnapshot(db)).not.toHaveProperty("seen");
+    expect(readTaste(db).seen).toEqual([3]);
+  });
+});
+
+describe("readSnapshot and readTaste", () => {
+  it("hydrates pages with refs alone — no tags, no posts", () => {
+    toggleLike(db, post(1));
+    dismiss(db, post(2));
+
+    const snapshot = readSnapshot(db);
+
+    expect(snapshot.likes).toEqual([
+      { id: 1, likedAt: expect.any(Number) },
+    ]);
+    expect(snapshot.dismissed).toEqual([
+      { id: 2, dismissedAt: expect.any(Number) },
+    ]);
+  });
+
+  it("gives the taste profile the newest entries, oldest first", () => {
+    for (let id = 1; id <= 5; id++) toggleLike(db, post(id));
+
+    const taste = readTaste(db, 3);
+
+    expect(taste.likes.map((like) => like.id)).toEqual([3, 4, 5]);
+    expect(taste.likes[0].tags).toEqual(["artist_a", "character_b"]);
+  });
+
+  it("windows both lists at TASTE_WINDOW by default", () => {
+    replaceSnapshot(db, {
+      likes: Array.from({ length: TASTE_WINDOW + 10 }, (_, i) => ({
+        id: i + 1,
+        tags: ["a"],
+        score: 0,
+        rating: "safe",
+        likedAt: i + 1,
+      })),
+      dismissed: Array.from({ length: TASTE_WINDOW + 10 }, (_, i) => ({
+        id: i + 1,
+        tags: ["b"],
+        dismissedAt: i + 1,
+      })),
+      seeds: [],
+      blocked: [],
+    });
+
+    const taste = readTaste(db);
+
+    expect(taste.likes).toHaveLength(TASTE_WINDOW);
+    expect(taste.dismissed).toHaveLength(TASTE_WINDOW);
+    expect(taste.likes.at(-1)!.id).toBe(TASTE_WINDOW + 10);
   });
 });
 
@@ -279,12 +334,12 @@ describe("replaceSnapshot", () => {
     });
 
     expect(readSnapshot(db)).toMatchObject({
-      likes: [{ id: 9, tags: ["x"], likedAt: 10 }],
+      likes: [{ id: 9, likedAt: 10 }],
       dismissed: [{ id: 8 }],
-      seen: [7],
       seeds: ["new"],
       blocked: ["gore"],
     });
+    expect(readSeen(db)).toEqual([7]);
     expect(readLikePosts(db)).toEqual([post(9)]);
     expect(readTagMeta(db)).toEqual([["x", 3, "artist"]]);
   });

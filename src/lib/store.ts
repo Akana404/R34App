@@ -7,10 +7,15 @@ import {
   MAX_TAGS,
   sanitizeBlockedTags,
   tagsOf,
+  TASTE_WINDOW,
   type AppSnapshot,
   type DismissedPost,
+  type DismissRef,
   type LikedPost,
+  type LikeRef,
+  type StoreContent,
   type TagMetaEntry,
+  type TasteProfile,
 } from "@/lib/state";
 import { postSchema, type Post, type TagInfo } from "@/lib/types";
 
@@ -114,14 +119,67 @@ function parsePost(raw: string | null): Post | undefined {
   }
 }
 
-/** The light state every page needs synchronously — no post blobs, no tag meta. */
+/** Ids and timestamps only: what a card needs, at ~40 bytes a like. */
+export function readLikeRefs(db: Db): LikeRef[] {
+  const rows = db
+    .prepare("SELECT id, liked_at FROM likes ORDER BY liked_at, id")
+    .all() as { id: number; liked_at: number }[];
+  return rows.map((row) => ({ id: row.id, likedAt: row.liked_at }));
+}
+
+export function readDismissRefs(db: Db): DismissRef[] {
+  const rows = db
+    .prepare("SELECT id, dismissed_at FROM dismissed ORDER BY dismissed_at, id")
+    .all() as { id: number; dismissed_at: number }[];
+  return rows.map((row) => ({ id: row.id, dismissedAt: row.dismissed_at }));
+}
+
+/** The light state every page needs synchronously — no tags, no post blobs. */
 export function readSnapshot(db: Db): AppSnapshot {
   return {
-    likes: readLikes(db),
-    dismissed: readDismissed(db),
-    seen: readSeen(db),
+    likes: readLikeRefs(db),
+    dismissed: readDismissRefs(db),
     seeds: readSeeds(db),
     blocked: readBlockedTags(db),
+  };
+}
+
+/**
+ * The tags behind the newest likes and dismissals, for the taste profile.
+ *
+ * Windowed rather than complete: the weights are recency-decayed, so the
+ * oldest entries barely move the result, while their tags would still have to
+ * cross the wire — a like costs ~800 bytes here against ~40 as a ref.
+ * Returned oldest-first, the order the profile expects. The seen ids ride
+ * along: they are the same size again and only this feed reads them.
+ */
+export function readTaste(db: Db, limit = TASTE_WINDOW): TasteProfile {
+  const likeRows = db
+    .prepare(
+      `SELECT id, tags, score, rating, liked_at FROM likes
+       ORDER BY liked_at DESC, id DESC LIMIT ?`,
+    )
+    .all(limit) as LikeRow[];
+  const dismissedRows = db
+    .prepare(
+      `SELECT id, tags, dismissed_at FROM dismissed
+       ORDER BY dismissed_at DESC, id DESC LIMIT ?`,
+    )
+    .all(limit) as DismissedRow[];
+  return {
+    seen: readSeen(db),
+    likes: likeRows.reverse().map((row) => ({
+      id: row.id,
+      tags: parseTags(row.tags),
+      score: row.score,
+      rating: row.rating,
+      likedAt: row.liked_at,
+    })),
+    dismissed: dismissedRows.reverse().map((row) => ({
+      id: row.id,
+      tags: parseTags(row.tags),
+      dismissedAt: row.dismissed_at,
+    })),
   };
 }
 
@@ -148,7 +206,7 @@ export type { TagMetaEntry };
  * blob is missing or unreadable is still exported, without it), dismissals,
  * seeds and blocked tags. Seen ids and tag metadata are caches and stay out.
  */
-export function readExport(db: Db): Omit<AppSnapshot, "seen"> {
+export function readExport(db: Db): StoreContent {
   const rows = db
     .prepare(
       "SELECT id, tags, score, rating, liked_at, post FROM likes ORDER BY liked_at, id",
@@ -192,7 +250,7 @@ function nextOrd(
   return row.max + 1;
 }
 
-export function toggleLike(db: Db, post: Post): LikedPost[] {
+export function toggleLike(db: Db, post: Post): LikeRef[] {
   db.transaction(() => {
     const existing = db
       .prepare("SELECT id FROM likes WHERE id = ?")
@@ -217,10 +275,12 @@ export function toggleLike(db: Db, post: Post): LikedPost[] {
          (SELECT id FROM likes ORDER BY liked_at DESC, id DESC LIMIT ?)`,
     ).run(MAX_LIKES);
   })();
-  return readLikes(db);
+  // Refs, not the tagged rows: this answer reconciles the mirror every page
+  // holds, and the taste profile keeps its own copy.
+  return readLikeRefs(db);
 }
 
-export function dismiss(db: Db, post: Post): DismissedPost[] {
+export function dismiss(db: Db, post: Post): DismissRef[] {
   db.transaction(() => {
     db.prepare(
       `INSERT INTO dismissed (id, tags, dismissed_at) VALUES (?, ?, ?)
@@ -231,17 +291,17 @@ export function dismiss(db: Db, post: Post): DismissedPost[] {
          (SELECT id FROM dismissed ORDER BY dismissed_at DESC, id DESC LIMIT ?)`,
     ).run(MAX_DISMISSED);
   })();
-  return readDismissed(db);
+  return readDismissRefs(db);
 }
 
-export function undismiss(db: Db, id: number): DismissedPost[] {
+export function undismiss(db: Db, id: number): DismissRef[] {
   db.prepare("DELETE FROM dismissed WHERE id = ?").run(id);
-  return readDismissed(db);
+  return readDismissRefs(db);
 }
 
-export function clearDismissed(db: Db): DismissedPost[] {
+export function clearDismissed(db: Db): DismissRef[] {
   db.prepare("DELETE FROM dismissed").run();
-  return readDismissed(db);
+  return readDismissRefs(db);
 }
 
 /**
@@ -313,7 +373,7 @@ export function recordTagInfo(db: Db, entries: TagInfo[]): void {
   })();
 }
 
-export interface SnapshotImport extends Omit<AppSnapshot, "seen"> {
+export interface SnapshotImport extends StoreContent {
   seen?: number[];
   tagMeta?: TagMetaEntry[];
 }

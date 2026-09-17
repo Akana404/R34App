@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { useLikes } from "@/lib/prefs";
+import { useTaste } from "@/lib/prefs";
 import { fetchTagMetaForPost, loadTagMeta, readTagMeta } from "@/lib/tagmeta";
 
 /** Pause between lookups — this is a background nicety, not a race. */
@@ -20,7 +20,7 @@ const COVERAGE = 0.8;
  * are exactly the ones the taste profile is built from.
  */
 export function TagMetaSync() {
-  const { likes } = useLikes();
+  const { likes } = useTaste();
   // Posts that genuinely have no tag info: don't retry them forever.
   // (Failed requests are transient and stay retryable.)
   const skip = useRef(new Set<number>());

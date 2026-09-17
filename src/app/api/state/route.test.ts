@@ -9,6 +9,7 @@ const store = {
   readSnapshot: vi.fn(),
   readLikePosts: vi.fn(),
   readTagMeta: vi.fn(),
+  readTaste: vi.fn(),
   toggleLike: vi.fn(),
   dismiss: vi.fn(),
   undismiss: vi.fn(),
@@ -80,9 +81,11 @@ describe("GET /api/state", () => {
     expect(store.readLikePosts).not.toHaveBeenCalled();
   });
 
-  it("returns the liked posts and the tag metadata on request", async () => {
+  it("returns the liked posts, the tag metadata and the taste tags on request", async () => {
     store.readLikePosts.mockReturnValue([post(1)]);
     store.readTagMeta.mockReturnValue([["a", 5, "artist"]]);
+    const taste = { likes: [{ id: 1, tags: ["a"] }], dismissed: [] };
+    store.readTaste.mockReturnValue(taste);
 
     expect(await (await get("/api/state?part=likePosts")).json()).toEqual([
       post(1),
@@ -90,6 +93,9 @@ describe("GET /api/state", () => {
     expect(await (await get("/api/state?part=tagMeta")).json()).toEqual([
       ["a", 5, "artist"],
     ]);
+    expect(await (await get("/api/state?part=taste")).json()).toEqual(taste);
+    // The default answer stays the cheap one.
+    expect(store.readTaste).toHaveBeenCalledTimes(1);
   });
 
   it("reports a broken database as a server error", async () => {
