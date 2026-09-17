@@ -24,7 +24,10 @@ A modern, locally running web UI for browsing Rule34 content via the [rule34.xxx
 
 ## Setup
 
-> Running this somewhere other than your desktop? See the deployment guides for [Docker](docs/deployment-docker.md) and [Raspberry Pi](docs/deployment-raspberry.md).
+> Running this somewhere other than your desktop? A prebuilt image is published
+> for every release as `ghcr.io/akana404/r34app` (`linux/amd64` and
+> `linux/arm64`) — see the deployment guides for
+> [Docker](docs/deployment-docker.md) and [Raspberry Pi](docs/deployment-raspberry.md).
 
 1. Get an API key: [rule34.xxx → Account → Options](https://rule34.xxx/index.php?page=account&s=options) → API Access Credentials
 2. Copy `.env.example` to `.env` and fill in the values:

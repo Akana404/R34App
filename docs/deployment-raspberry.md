@@ -2,6 +2,11 @@
 
 This guide covers running R34 Browser as a persistent service on a Raspberry Pi.
 
+> Faster route: a prebuilt `linux/arm64` image is published for every release,
+> so the Pi never has to run `next build` or compile `better-sqlite3`. See the
+> [Docker guide](deployment-docker.md). The steps below are for running it
+> directly under systemd instead.
+
 ## 1. Install Node.js
 
 Node.js >= 20.9 is required. Using [nvm](https://github.com/nvm-sh/nvm) is the simplest path:

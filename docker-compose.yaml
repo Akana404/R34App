@@ -1,6 +1,6 @@
 services:
   r34app:
-    build: .
+    image: ghcr.io/akana404/r34app:latest
     container_name: r34app
     ports:
       - "3000:3000"

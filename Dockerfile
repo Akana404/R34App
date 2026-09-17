@@ -21,6 +21,30 @@ RUN npm ci
 
 
 # --------------------------------------------------
+# Production dependencies
+#
+# A second install without the dev dependencies: the runner needs `next` (a
+# real dependency) but none of the toolchain the build used. The build tools
+# stay because better-sqlite3 falls back to compiling from source when no
+# prebuilt binary exists for the target architecture.
+# --------------------------------------------------
+FROM node:22-bookworm-slim AS prod-deps
+
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        python3 \
+        make \
+        g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY package.json package-lock.json ./
+
+RUN npm ci --omit=dev
+
+
+# --------------------------------------------------
 # Build
 # --------------------------------------------------
 FROM node:22-bookworm-slim AS builder
@@ -56,7 +80,7 @@ RUN groupadd --system --gid 1001 nodejs \
     && useradd --system --uid 1001 --gid nodejs nextjs
 
 COPY --from=builder --chown=nextjs:nodejs /app/.next ./.next
-COPY --from=builder /app/node_modules ./node_modules
+COPY --from=prod-deps /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./package.json
 
 # SQLite database directory
