@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getDb } from "@/lib/db";
+import { logError } from "@/lib/log";
 import * as store from "@/lib/store";
 import { postSchema, tagInfoSchema } from "@/lib/types";
 
@@ -47,7 +48,7 @@ export async function GET(req: NextRequest) {
     }
     return NextResponse.json(store.readSnapshot(db), { headers: HEADERS });
   } catch (err) {
-    console.error("state read failed:", err);
+    logError("state", "read failed", err);
     return NextResponse.json({ error: "state unavailable" }, { status: 500 });
   }
 }
@@ -99,7 +100,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: true }, { headers: HEADERS });
     }
   } catch (err) {
-    console.error("state mutation failed:", err);
+    logError("state", `${mutation.action} failed`, err);
     return NextResponse.json({ error: "state unavailable" }, { status: 500 });
   }
 }

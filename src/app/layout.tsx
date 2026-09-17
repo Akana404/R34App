@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { BottomNav } from "@/components/BottomNav";
 import { getDb } from "@/lib/db";
+import { logError } from "@/lib/log";
 import { readSnapshot } from "@/lib/store";
 import type { AppSnapshot } from "@/lib/state";
 import { Providers } from "./providers";
@@ -53,7 +54,7 @@ export default function RootLayout({
   try {
     initialState = readSnapshot(getDb());
   } catch (err) {
-    console.error("could not read the saved state:", err);
+    logError("layout", "could not read the saved state", err);
   }
 
   return (
