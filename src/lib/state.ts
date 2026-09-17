@@ -48,6 +48,9 @@ export interface AppSnapshot {
   blocked: string[];
 }
 
+/** A tag's site-wide post count and category, as stored and as sent. */
+export type TagMetaEntry = [tag: string, count: number, category: string];
+
 export function tagsOf(post: Post): string[] {
   return post.tags.split(/\s+/).filter(Boolean);
 }

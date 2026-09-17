@@ -13,6 +13,7 @@ import {
   dismiss,
   readBlockedTags,
   readDismissed,
+  readExport,
   readLikePosts,
   readLikes,
   readSeeds,
@@ -209,7 +210,59 @@ describe("readSnapshot", () => {
   });
 });
 
+describe("readExport", () => {
+  it("keeps likes whose post is missing or unreadable, without the post", () => {
+    toggleLike(db, post(1));
+    toggleLike(db, post(2));
+    toggleLike(db, post(3));
+    db.prepare("UPDATE likes SET post = NULL WHERE id = 1").run();
+    db.prepare("UPDATE likes SET post = '{broken' WHERE id = 2").run();
+    dismiss(db, post(4));
+    setSeeds(db, ["seed"]);
+    setBlockedTags(db, ["gore"]);
+    recordSeen(db, [9]);
+
+    const exported = readExport(db);
+
+    expect(exported.likes.map((like) => [like.id, like.post])).toEqual([
+      [1, undefined],
+      [2, undefined],
+      [3, post(3)],
+    ]);
+    expect(exported.dismissed.map((entry) => entry.id)).toEqual([4]);
+    expect(exported.seeds).toEqual(["seed"]);
+    expect(exported.blocked).toEqual(["gore"]);
+    expect(exported).not.toHaveProperty("seen");
+  });
+
+  it("round-trips through replaceSnapshot", () => {
+    toggleLike(db, post(1));
+    toggleLike(db, post(2));
+    dismiss(db, post(3));
+    setSeeds(db, ["a", "b"]);
+    setBlockedTags(db, ["gore"]);
+    const before = readExport(db);
+
+    replaceSnapshot(db, { likes: [], dismissed: [], seeds: [], blocked: [] });
+    replaceSnapshot(db, JSON.parse(JSON.stringify(before)));
+
+    expect(readExport(db)).toEqual(before);
+  });
+});
+
 describe("replaceSnapshot", () => {
+  it("leaves the caches alone when they aren't given", () => {
+    toggleLike(db, post(1));
+    recordSeen(db, [5, 6]);
+    recordTagInfo(db, [{ tag: "a", count: 3, type: "artist" }]);
+
+    replaceSnapshot(db, { likes: [], dismissed: [], seeds: [], blocked: [] });
+
+    expect(readLikes(db)).toEqual([]);
+    expect(readSeen(db)).toEqual([5, 6]);
+    expect(readTagMeta(db)).toEqual([["a", 3, "artist"]]);
+  });
+
   it("replaces everything that was there before", () => {
     toggleLike(db, post(1));
     setSeeds(db, ["old"]);

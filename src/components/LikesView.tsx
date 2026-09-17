@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { MasonryColumns } from "@/components/MasonryColumns";
 import { AppHeader } from "@/components/AppHeader";
+import { BackupControls } from "@/components/BackupControls";
 import { SortIcon } from "@/components/icons";
 import { MAX_LIKES, useLikedPosts, useMobileColumns } from "@/lib/prefs";
 
@@ -69,22 +70,25 @@ export function LikesView() {
           </p>
         }
         controls={
-          <button
-            onClick={() => setOldestFirst((v) => !v)}
-            aria-pressed={oldestFirst}
-            title="Flip the sort order"
-            className={BUTTON}
-          >
-            <SortIcon className="size-4" />
-            {oldestFirst ? "Oldest first" : "Newest first"}
-          </button>
+          <>
+            <button
+              onClick={() => setOldestFirst((v) => !v)}
+              aria-pressed={oldestFirst}
+              title="Flip the sort order"
+              className={BUTTON}
+            >
+              <SortIcon className="size-4" />
+              {oldestFirst ? "Oldest first" : "Newest first"}
+            </button>
+            <BackupControls />
+          </>
         }
       />
 
       {nearCap && (
         <p className="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
           {likes.length} of {MAX_LIKES} likes stored. At the limit the oldest
-          like is dropped for each new one — copy the database file to keep them.
+          like is dropped for each new one — export a backup to keep them.
         </p>
       )}
 

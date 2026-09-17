@@ -47,8 +47,14 @@ Started without credentials, the app shows these setup steps in place of the fee
 ### Your data
 
 Everything the app remembers is written to `data/r34-browser.sqlite` (override
-with `DB_PATH` in `.env`). The file is created on first run and is the backup:
-copy it to keep your likes, delete it to start over. Only the three per-browser
+with `DB_PATH` in `.env`). The file is created on first run. Delete it to start over.
+
+To back up or move your data, use **Export** and **Import** on the Liked page.
+Export downloads a JSON file with your likes (including the posts), dismissals,
+seed tags and blocked tags. Import replaces all of those with the contents of a
+file, after asking you to confirm. The caches (posts already shown in For You and
+tag metadata) are not included and rebuild themselves. Copying the SQLite file
+works as a backup too. Only the three per-browser
 display switches — mobile column count, hide-AI, and the rating filter — stay in
 that browser's `localStorage`.
 
@@ -128,4 +134,4 @@ src/
 - `npm run start` — production server
 - `npm run lint` — ESLint
 - `npm test` — test suite (`npm run test:watch` to iterate, `npm run test:coverage` for coverage)
-- `npm run import-backup -- <file.json>` — one-off import of an old localStorage export
+- `npm run import-backup -- <file.json>` — import an old localStorage export (or an in-app export) from the command line
