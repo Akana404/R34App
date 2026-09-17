@@ -7,22 +7,17 @@ This guide covers running R34 Browser as a Docker container on a Raspberry Pi or
 - Docker Engine 24+ and Docker Compose v2+
 - An API key from [rule34.xxx → Account → Options](https://rule34.xxx/index.php?page=account&s=options)
 
-The provided `Dockerfile` is multi-arch and works on both `linux/amd64` and `linux/arm64` (Raspberry Pi 3/4/5, 64-bit OS).
+Published images are built for `linux/amd64` and `linux/arm64` (Raspberry Pi 3/4/5, 64-bit OS), and the `Dockerfile` builds on both as well.
 
-## 1. Clone and configure
+## 1. Configure
 
-```sh
-git clone <repo-url>
-cd R34App
-```
-
-Create `.env` from the template:
+You need `docker-compose.yaml` and a `.env` next to it — a clone is optional:
 
 ```sh
-cp .env.example .env
+curl -O https://raw.githubusercontent.com/Akana404/R34App/main/docker-compose.yaml
 ```
 
-Edit `.env` and set:
+Create `.env` with your credentials:
 
 ```env
 API_KEY=your_api_key
@@ -31,16 +26,26 @@ USER_ID=your_user_id
 
 Optional: `DB_PATH` is already set to `/app/data/r34-browser.sqlite` in `docker-compose.yaml`. The SQLite file lives in the named volume `r34app-data` so it persists across container updates.
 
-## 2. Build and run
+## 2. Run
 
 ```sh
-docker compose up -d --build
+docker compose up -d
 ```
 
-This will:
-- Build the image
-- Start the container on port 3000
-- Create the persistent volume for the database
+This pulls `ghcr.io/akana404/r34app:latest`, starts the container on port 3000
+and creates the persistent volume for the database. Pin a version instead of
+`latest` by editing the `image:` line (for example `:1.0`).
+
+### Building from source instead
+
+If you'd rather build the image yourself, clone the repository and add the
+build overlay:
+
+```sh
+git clone <repo-url> && cd R34App
+cp .env.example .env    # then fill in API_KEY and USER_ID
+docker compose -f docker-compose.yaml -f docker-compose.build.yaml up -d --build
+```
 
 Check logs:
 
@@ -65,9 +70,15 @@ http://<pi-ip>:3000
 ## 4. Updating
 
 ```sh
-cd R34App
+docker compose pull
+docker compose up -d
+```
+
+Building from source instead:
+
+```sh
 git pull
-docker compose up -d --build
+docker compose -f docker-compose.yaml -f docker-compose.build.yaml up -d --build
 ```
 
 The named volume `r34app-data` preserves your likes, dismissals, seed/blocked tags, and tag metadata across updates.
