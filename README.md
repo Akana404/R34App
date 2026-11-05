@@ -29,6 +29,10 @@ Options](https://rule34.xxx/index.php?page=account&s=options) → API Access
 Credentials. Started without them, the app shows these setup steps in place of
 the feed.
 
+![API_Key in R34 Account Options](docs/img/API_Key.png)
+API_KEY = yellow | USER_ID = blue
+>The `&` is not part of the API key!
+
 ### With Docker (recommended)
 
 A prebuilt image is published for every release as `ghcr.io/akana404/r34app`,
