@@ -6,6 +6,5 @@ updates:
     directory: /
     schedule: { interval: monthly }
     groups: { actions: { patterns: ["*"] } }
-  - package-ecosystem: docker
-    directory: /
-    schedule: { interval: monthly }
+# No docker entry: the floating node:24 tag already picks up patches on every
+# build, and all Dependabot would add is PRs for Node majors (odd ones included).
