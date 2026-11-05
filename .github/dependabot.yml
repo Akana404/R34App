@@ -1,0 +1,11 @@
+# npm is covered by the security updates switched on in the repo settings;
+# version updates would open several PRs a week for this dependency tree.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: monthly }
+    groups: { actions: { patterns: ["*"] } }
+  - package-ecosystem: docker
+    directory: /
+    schedule: { interval: monthly }
