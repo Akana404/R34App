@@ -3,7 +3,7 @@
 # --------------------------------------------------
 # Dependencies
 # --------------------------------------------------
-FROM node:22-bookworm-slim AS deps
+FROM node:24-bookworm-slim AS deps
 
 WORKDIR /app
 
@@ -28,7 +28,7 @@ RUN npm ci
 # stay because better-sqlite3 falls back to compiling from source when no
 # prebuilt binary exists for the target architecture.
 # --------------------------------------------------
-FROM node:22-bookworm-slim AS prod-deps
+FROM node:24-bookworm-slim AS prod-deps
 
 WORKDIR /app
 
@@ -47,7 +47,7 @@ RUN npm ci --omit=dev
 # --------------------------------------------------
 # Build
 # --------------------------------------------------
-FROM node:22-bookworm-slim AS builder
+FROM node:24-bookworm-slim AS builder
 
 WORKDIR /app
 
@@ -62,7 +62,7 @@ RUN npm run build
 # --------------------------------------------------
 # Production
 # --------------------------------------------------
-FROM node:22-bookworm-slim AS runner
+FROM node:24-bookworm-slim AS runner
 
 WORKDIR /app
 
