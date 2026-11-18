@@ -5,6 +5,9 @@ const nextConfig: NextConfig = {
   // the server instead of being bundled, or the .node binding never resolves.
   serverExternalPackages: ["better-sqlite3"],
 
+  // Don't let `next dev` write an AGENTS.md into the repo.
+  agentRules: false,
+
   // Opt-in for opening the dev server from another device on the LAN
   // (e.g. a phone): set ALLOWED_DEV_ORIGIN to that device-facing IP.
   ...(process.env.ALLOWED_DEV_ORIGIN
