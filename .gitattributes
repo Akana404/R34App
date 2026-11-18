@@ -1,0 +1,8 @@
+# Text files are stored and checked out with LF, regardless of core.autocrlf.
+* text=auto eol=lf
+
+# Binary assets: never touch their bytes.
+*.png binary
+*.jpg binary
+*.ico binary
+*.sqlite binary
